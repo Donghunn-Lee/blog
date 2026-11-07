@@ -1,0 +1,158 @@
+---
+title: "[TypeScript] 유틸리티 타입과 조건부 타입 — FE 개념 탐구 #035"
+date: 2026-05-07
+lastmod: 2026-11-03
+summary: "💡 핵심 요약유틸리티 타입은 기존 타입을 살짝 바꿔서 새 타입을 만드는 도구다. Partial, Pick, Omit 정도가 일상에서 8할을 차지한다.종류는 많지만 손에 익는 건 몇 개로 좁아진다. 전부 외우려 하기보다, 자주 쓰는 것을 먼저 익히고 라이브러리 타입을 "
+tags: ["Conditional Types","Utility Types","frontend","infer","mapped types","typescript","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- 유틸리티 타입은 **기존 타입을 살짝 바꿔서 새 타입을 만드는 도구**다. `Partial`, `Pick`, `Omit` 정도가 일상에서 8할을 차지한다.
+- 종류는 많지만 손에 익는 건 몇 개로 좁아진다. 전부 외우려 하기보다, 자주 쓰는 것을 먼저 익히고 라이브러리 타입을 읽다 만나면 그때 채워가는 편이 낫다.
+- `ReturnType`, `Awaited` 같은 타입의 정체를 보면 그 안에 **조건부 타입**과 **`infer`** 가 들어 있다. 이 둘은 자주 쓰진 않더라도, 마주쳤을 때 읽을 수 있는 정도면 충분하다.
+
+---
+
+## 유틸리티 타입이 하는 일
+
+`User` 타입을 정의해두고 한참 쓰다 보면, 같은 타입의 변형이 필요한 순간이 온다. 폼에서는 일부 필드만 옵셔널로 받고 싶고, 카드 컴포넌트에는 `id`와 `name`만 넘기고 싶고, 회원가입 입력에는 서버가 만드는 `id`를 빼고 싶다.
+
+그때마다 새 타입을 손으로 적으면 `User`가 바뀔 때마다 두세 군데를 같이 고쳐야 한다. 유틸리티 타입은 그 변형을 한 줄로 끝내준다. **"기존 타입을 살짝 바꿔서 새 타입을 만드는 도구"** 정도로 이해하면 충분하다.
+
+```ts
+type UserUpdateInput = Partial<User>;       // 모든 필드 옵셔널
+type UserCard = Pick<User, "id" | "name">;  // 일부 필드만
+type SignupInput = Omit<User, "id">;        // 일부 필드 빼고
+```
+
+이 글에서 주로 다룰 건 이게 전부다. 종류는 많지만 대부분 라이브러리 내에서나 사용되고, 개발할 때 사용되는 타입은 많지 않기 때문이다.
+
+---
+
+## 유틸리티 타입의 종류
+
+TS는 `Partial`, `Pick`, `Omit`, `Record`, `Required`, `Readonly`, `NonNullable`, `Parameters`, `ReturnType`, `Awaited` 등 다양한 유틸리티 타입을 제공한다. 처음부터 다 외우려 하면 부담만 크다. 실제로 자주 쓰이는 자리부터 짚어보자.
+
+### `Partial<T>` — 모든 필드를 옵셔널로
+
+```ts
+type User = { id: string; name: string; email: string };
+type UserUpdate = Partial<User>;
+// { id?: string; name?: string; email?: string }
+
+function updateUser(id: string, patch: Partial<User>) {
+  // patch에는 일부 필드만 들어올 수 있다
+}
+
+updateUser("u1", { name: "Alice" }); // OK
+```
+
+부분 업데이트가 필요한 거의 모든 자리에서 등장할 수 있다. `setState(prev => ({ ...prev, ...patch }))` 패턴, REST의 `PATCH` 요청 body, 폼 초기값 등의 경우들이다.
+
+### `Pick<T, K>` — 일부 필드만 뽑기
+
+```ts
+type UserCard = Pick<User, "id" | "name">;
+// { id: string; name: string }
+
+function UserCardView(props: UserCard) { /* ... */ }
+```
+
+리스트에서 카드 컴포넌트로 일부 필드만 넘길 때 자주 쓴다. 컴포넌트 props를 새 타입으로 처음부터 적지 않아도 된다.
+
+### `Omit<T, K>` — 일부 필드 빼기
+
+```ts
+type SignupInput = Omit<User, "id">;
+// { name: string; email: string }
+```
+
+가장 흔히 사용되는 경우는 "서버가 만드는 필드를 뺀 입력 타입"이다. 회원가입 입력에 `id`나 `createdAt`은 들어가면 안 되니, `Omit`으로 잘라낸다.
+
+> ⚠️ **`Omit`은 키 오타를 잡아주지 않는다.**
+> `Pick`은 두 번째 인자에 `T`에 없는 키를 넣으면 컴파일 에러를 내지만, `Omit`은 그냥 통과시킨다. 의도된 설계인데, 그 결과 `Omit<User, "phon">` 같은 오타가 조용히 넘어가니 한 번씩 짚을 필요가 있다.
+
+### 그 외에 알아둘 만한 것
+
+이 정도가 유틸리티 타입 사용의 8할이다. 나머지는 마주쳤을 때 의미정도를 알아두면 좋을 것 같다.
+
+| 타입 | 하는 일 |
+| --- | --- |
+| `Required<T>` | 모든 필드를 필수로 (옵셔널 제거) |
+| `Readonly<T>` | 모든 필드를 `readonly`로 |
+| `NonNullable<T>` | union에서 `null`과 `undefined` 제거 |
+| `Record<K, V>` | 키 union과 값 타입으로 객체 모양 만들기 |
+| `ReturnType<T>` | 함수 타입에서 반환 타입 추출 |
+| `Awaited<T>` | `Promise<X>`에서 `X` 추출 |
+
+특히 `ReturnType<typeof useSomething>` 패턴은 커스텀 훅의 반환 타입을 다른 곳에서 다시 쓸 때 자주 등장한다.
+
+```ts
+function useUser() {
+  return { user, login, logout };
+}
+
+type UseUserReturn = ReturnType<typeof useUser>;
+// { user: User; login: () => void; logout: () => void }
+```
+
+---
+
+## 조건부 타입이란
+
+여기까지가 매일 쓰는 도구의 이야기다. 이제 한 발 더 들어가 보면, 위에서 본 `ReturnType`이나 `Awaited`는 **조건부 타입**으로 만들어져 있다.
+
+조건부 타입을 직접 만들 일은 자주 없다. 다만 라이브러리 타입을 읽다 보면 마주치고, 한번 의미를 익혀두면 그때 막히지 않는다.
+
+기본형은 삼항 연산자처럼 생겼다.
+
+```ts
+type IsString<T> = T extends string ? true : false;
+
+type A = IsString<"hello">; // true
+type B = IsString<42>;       // false
+```
+
+`T가 string에 할당 가능하면 true, 아니면 false`. 동작 위치가 **타입 레벨**일 뿐 모양은 `condition ? x : y`와 같다.
+
+여기에 `infer` 키워드를 곁들이면 **타입 안에서 부분을 빼낼 수 있다.**
+
+```ts
+type ReturnType<T extends (...args: any) => any> =
+  T extends (...args: any) => infer R ? R : any;
+
+type A = ReturnType<() => number>;        // number
+type B = ReturnType<(x: string) => User>; // User
+```
+
+`infer R`은 **"이 자리에 있는 타입을 R이라는 이름으로 잡아둬"** 라는 뜻이다. `T`가 함수 타입에 매칭되면 반환 타입 자리를 `R`로 빼내고, 그걸 결과로 내보낸다.
+
+같은 패턴이 다른 모양에도 그대로 적용된다.
+
+```ts
+type Awaited<T> = T extends Promise<infer U> ? U : T;
+type ElementOf<T> = T extends (infer E)[] ? E : never;
+
+type X = Awaited<Promise<User>>; // User
+type Y = ElementOf<number[]>;    // number
+```
+
+읽는 법은 동일하다. `T`가 특정 모양(`Promise<...>`, `(...)[]`)에 들어맞는지 확인하고,
+들어맞으면 `infer`로 표시해 둔 자리의 타입을 결과로 내보낸다. 모양이 다르면 `false`
+분기로 빠진다 — `Awaited`는 그 경우 `T`를 그대로, `ElementOf`는 `never`를 돌려준다.
+
+`infer` 자리만 바꿔 끼우면 함수의 첫 번째 인자, 튜플의 마지막 요소, 객체의 특정
+프로퍼티 타입 같은 것도 같은 방식으로 빼낼 수 있다.
+
+라이브러리 타입에서 `infer`를 만나면 십중팔구 이 패턴이다.
+**"이 모양에 매칭되면 이 자리의 타입을 빼낸다."**
+그 이상의 디테일은 직접 만들 일이 생겼을 때 더 파고들면 충분하다.
+
+---
+
+## 정리
+
+유틸리티 타입은 종류가 많지만, 실제로 손에 붙는 건 `Partial`, `Pick`, `Omit` 정도와 거기에 `ReturnType`, `Awaited`를 곁들인 정도다. 이 정도만 익숙해져도 일상 코드에서 타입을 두 번 적는 일은 거의 없어진다.
+
+조건부 타입과 `infer`는 직접 만드는 빈도는 낮지만, 위 유틸리티 타입들이 어떻게 만들어졌는지를 설명하는 핵심이고, 라이브러리 타입을 읽을 때 한 번씩 만난다. **만들 줄 알기보다 읽을 줄 아는 것**이 먼저다. 거기까지가 처음에 잡아두면 좋은 선이다.

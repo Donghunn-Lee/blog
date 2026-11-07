@@ -1,0 +1,185 @@
+---
+title: "[SlateKR #037] fallback 점검 — empty와 error를 구분하기"
+date: 2026-05-23
+lastmod: 2026-10-25
+summary: "이번 작업은 트랙 F의 F2 — 섹션별 fallback 전수 점검이었다. 초기 설계에서 loading / empty / error / partial failure 네 가지 상태를 반드시 구분한다고 적어두긴 했는데, 실제로 그 원칙이 코드 전반에 균질하게 적용돼 있는지는"
+tags: ["React","errorhandling","fallback","next.js","SlateKR"]
+images: ["/static/images/velog/a615e5f6-0373-4371-9f60-9e1a93fd291e-image.png"]
+draft: false
+---
+
+이번 작업은 트랙 F의 F2 — 섹션별 fallback 전수 점검이었다. 초기 설계에서 `loading / empty / error / partial failure` 네 가지 상태를 반드시 구분한다고 적어두긴 했는데, 실제로 그 원칙이 코드 전반에 균질하게 적용돼 있는지는 아직 제대로 점검한 적이 없었다.
+
+원래는 다음 데이터 작업(B10, B11)을 이어가려고 했지만, DART API 호출 한도가 차서 원본 검증 단계가 막혔다. 그래서 이번 세션은 데이터 작업을 미루고, DART와 무관한 항목 중 블로그 한 편 단위로 끊기 좋은 것을 골랐다. F2가 가장 적당했다.
+
+---
+
+## 점검 시작 — 현황부터
+
+수정 전에 현재 fallback 처리가 어떤 모양인지부터 확인했다. 페이지/섹션 단위로 네 상태를 어떻게 처리하는지를 표로 정리했다.
+
+| 섹션 | loading | empty | error | partial failure |
+| --- | --- | --- | --- | --- |
+| 홈 | ❌ | 묵시적 | silent fail | 에러 미표시 |
+| 검색 | (불필요) | 3단계 분리 | ✅ | ✅ |
+| 종목 상세 라우트 | 섹션별 Suspense | notFound() | notFound() | ✅ |
+| StockHeader | ✅ | ✅ | catch→empty | ✅ |
+| StockChart | ✅ | ✅ | catch→empty | ✅ |
+| StockFinancials | ✅ | ✅ | catch→empty | ✅ |
+| StockDisclosures | ✅ | 3단계 분리 | catch→empty | ✅ |
+| SummarySlate | ✅ | idle 상태 | 5단계 분류 | ✅ |
+
+표로 늘어놓고 보니 패턴이 명확했다. 가장 단순한 검색 페이지와 가장 복잡한 SummarySlate는 네 상태가 잘 분리돼 있는데, **종목 상세의 4개 섹션이 다 같은 문제를 안고 있었다.** catch 블록에서 빈 배열이나 null로 폴백시킨 뒤, 그 다음 분기에서 빈 데이터 처리(empty UI)로 흘러가는 구조. 결과적으로 사용자 입장에서 "데이터가 없는 종목"과 "조회가 실패한 종목"이 같은 화면으로 보인다.
+
+```ts
+// 4개 섹션 공통 패턴
+try {
+  data = await fetch(...);
+} catch {
+  // 아무것도 안 함
+}
+// 이후 data가 비어있으면 "데이터 없음" UI
+```
+
+이 구조는 [#008](https://velog.io/@dh82680/SlateKR-008-종목-상세-페이지-구현)에서 종목 상세를 구현하면서 "섹션 독립 + try-catch + 빈 폴백"으로 결정했던 패턴이다. 그땐 한 섹션 실패가 페이지 전체를 깨뜨리지 않는 것까지만 의식했고, error UI와 empty UI를 구분해야 한다는 데까지는 못 갔다.
+
+---
+
+## error/empty를 어떻게 구분할까
+
+표현 방식을 결정해야 했다. 처음엔 텍스트 + 아이콘 조합을 떠올렸는데, 기존 패턴을 확인해보니 프로젝트 전반이 텍스트 메시지 차이로만 상태를 구분하고 있었다.
+
+검색 페이지는
+- "검색어를 입력해주세요"
+- "~에 해당하는 종목이 없습니다"
+- "검색 중 오류가 발생했습니다"
+
+세 단계를 텍스트만으로 분리한다. 공시 섹션도 DART API 키 미설정 메시지가 있긴 한데, 이것도 텍스트 기반이다.
+
+아이콘을 새로 도입하는 건 일관성을 깨는 거였다. 텍스트 차별화로만 가기로 했다.
+
+- empty: `"가격 데이터 없음"`, `"재무 데이터 없음"`, `"최근 공시 없음"` (기존 유지)
+- error: `"가격 데이터를 불러오지 못했습니다"` 같은 형태
+
+설계 원칙은 네 가지 상태의 구분이지만, 디자인 언어로 보면 메시지 톤 일관성이 더 중요한 결이다. 아이콘이나 색상으로 차별화하지 않고 메시지로만 구분하는 게 SlateKR의 현재 기조다.
+
+---
+
+## 4개 섹션 수정
+
+수정은 패턴이 단순해서 빨랐다. 각 섹션에서 `hasError` 플래그를 두고, catch에서 set한 다음 렌더 단계에서 분기를 추가했다.
+
+StockChart는 살짝 결정이 필요했다. 차트는 client component라 데이터 fetch 자체는 server component인 ChartSection에서 하고 있다. error UI를 ChartSection 쪽에 두고 StockChart 자체는 차트 렌더링만 책임지게 두기로 했다. StockChart에 `hasError` prop을 늘리는 것보다 책임 경계가 깔끔하다.
+
+DisclosuresSection은 원래 3단계 분기(API 키 없음 / 공시 없음 / 데이터 있음)였는데, error 케이스를 더해서 4단계가 됐다.
+
+```ts
+// 4단계 분기
+if (noApiKey) return <NoApiKey />;
+if (hasError) return <Error />;     // 신규
+if (disclosures.length === 0) return <Empty />;
+return <List ... />;
+```
+
+---
+
+## API 라우트 — try-catch 부재
+
+점검 중에 한 가지 더 발견한 게 있었다. `/api/prices`에 try-catch가 아예 없었다.
+
+```ts
+// 기존
+const [rows] = await pool.query<PriceRow[]>(...);  // throw → unhandled
+const prevResults = await Promise.all(
+  rows.map(async (row) => {
+    const [prev] = await pool.query<PriceRow[]>(...);  // 1개 실패 → 전체 실패
+    ...
+  })
+);
+```
+
+DB 오류 한 건이 라우트 전체를 500으로 띄울 수 있는 구조였다. 그리고 `Promise.all`이라서, 여러 종목 prev 조회 중 하나가 실패하면 나머지가 다 멀쩡해도 전체가 reject된다. 이건 부분 실패가 전체 실패로 번지는 명백한 케이스다.
+
+외곽 try-catch로 감싸고, 내부 `Promise.all`은 `Promise.allSettled`로 바꿨다. 개별 종목 prev 조회가 실패하면 그 종목만 prev null로 처리되고, 나머지는 정상 응답한다.
+
+---
+
+## 홈의 silent fail
+
+홈도 같은 결의 문제가 있었다. SearchInput과 WatchlistPreview 모두 `.catch(() => {})` 패턴이었다.
+
+```ts
+// SearchInput
+fetch(...).then(...).catch(() => {});  // 팝업만 닫히고 끝
+```
+
+화면은 "정상처럼" 보이는 상태로 유지되니까 사용자는 에러가 났는지조차 모른다. 이건 silent fail이고, "에러를 표면화한다"는 점검 목적과 정확히 반대 방향이다.
+
+SearchInput은 toast로 알리기로 했다. Sonner가 이미 providers.tsx에 등록돼 있어서 인프라는 따로 안 깔아도 됐다. 처음엔 인라인 메시지로 검색창 아래에 띄울까 했는데, 드롭다운이 닫혔을 때 메시지 위치가 애매해진다. toast가 더 단순했다.
+
+WatchlistPreview는 두 층으로 나눠 처리했다. 개별 종목 가격 조회 실패는 기존대로 `—`로 두고(부분 실패는 카드 단위로 흡수), 전체 fetch가 실패하면 패널 상단에 한 줄 메시지를 띄운다. ui는 임시로 띄웠고, 나중에 깔끔하게 다듬을 생각이다.
+
+---
+
+## 검증
+
+수정 후 4개 케이스를 실제로 깨뜨려가며 확인했다.
+
+**1. DART_API_KEY 미설정** → 공시 섹션만 "DART API 키 미설정" 메시지, 나머지 정상. partial failure 격리 동작.
+
+![DART 키 미설정 시 공시 섹션만 에러](/static/images/velog/bfcab843-9a97-493a-9929-4dbd60ff6402-image.png)
+
+**2. DART_API_KEY 잘못된 값** → 처음엔 "최근 공시 없음"으로 잘못 떨어졌다. dart.ts의 응답 status 체크 코드를 다시 보니 이렇게 돼 있었다.
+
+```ts
+if (!parsed.success || parsed.data.status !== "000") return [];
+```
+
+API 키 오류 코드(`010`, `011` 등)도 정상 status가 아니라는 이유로 그냥 빈 배열로 떨어지고 있었다. DART 응답 코드 중 `013`(데이터 없음)만 정상 empty고, 나머지 비정상 status는 throw해야 StockDisclosures의 hasError 분기로 흘러간다.
+
+```ts
+if (!parsed.success) throw new Error("DART 응답 파싱 실패");
+if (status === "013") return [];
+if (status !== "000") throw new Error(`DART API 오류: ${status}`);
+```
+
+수정 후 다시 띄우니 "공시를 불러오지 못했습니다"로 정상 표시.
+
+**3. SearchInput toast** → `/api/search`에 임시로 throw를 박고 검색해봤다. 우측 하단에 toast가 떴는데, 너무 눈에 안 띄었다. 검색창 위치가 화면 상단이라 시선 동선이 안 맞는다. Toaster의 `position`을 `top-right`로 바꿨다.
+
+![toast 위치 변경 후](/static/images/velog/a615e5f6-0373-4371-9f60-9e1a93fd291e-image.png)
+
+**4. DB 호스트 깨기** → 처음엔 `DATABASE_URL` 앞에 임의 문자열을 붙였더니 Runtime Error가 떴다. 이건 검증 방식 자체가 잘못된 거였다. `neon()` 초기화는 모듈 평가 시점에 일어나는데, URL 포맷 자체가 깨지면 lib/db.ts 로딩 시점에 throw가 발생한다. try-catch보다 먼저 터지는 셈이다.
+
+URL 포맷은 유지하되 호스트만 존재하지 않는 값으로 바꿨다. 이번엔 모듈 평가는 통과하고 실제 쿼리 시점에 catch됐다 — 그런데 또 다른 문제가 보였다.
+
+![Runtime Error: NeonDbError fetch failed](/static/images/velog/93b03132-53ba-46be-b21d-5494111d4b68-image.png)
+
+스택을 보니 `getStockByTicker`가 `lib/stocks.ts`에서 던지고 있었다. 이건 종목 상세 페이지의 page.tsx 본체에서 호출하는 함수다. 각 섹션에는 try-catch를 추가했지만, **page.tsx 본체의 `getStockByTicker` 호출은 점검 범위에서 빠져 있었다.** Suspense로 감싼 4개 섹션 바깥, page 본체에서 직접 호출하는 진입점.
+
+여기에도 try-catch를 추가했다. catch 시 `notFound()`로 처리한다. 사용자 입장에서 일시적 DB 오류를 "존재하지 않는 종목"으로 오인할 여지가 있긴 한데, error.tsx를 별도로 만드는 건 작업 범위를 확장하는 거고, 현재 단계에선 "페이지 진입 불가"라는 결과가 같으니 동일 경로로 흡수했다. 이 결정은 이후 다시 봐야 할 수 있다.
+
+`generateMetadata`도 같은 함수를 호출하고 있어서 거기도 같이 처리했다.
+
+---
+
+## 미뤄둔 이슈
+
+StockMetrics의 Promise.all은 그대로 뒀다. 가격과 재무를 동시에 불러오는데 한쪽이 실패하면 둘 다 null로 떨어진다. `/api/prices`는 이번에 `Promise.allSettled`로 바꿨으니 같은 전환을 여기에도 적용하는 게 일관성에 맞는데, 작업 단위가 너무 작아서 다음 세션에 다른 항목과 묶기로 했다. 로드맵 F2-2로 분리.
+
+---
+
+## 정리
+
+- 4개 섹션의 catch→empty 패턴을 깨고, error/empty를 텍스트 메시지로 구분했다.
+- `/api/prices`의 unhandled throw와 Promise.all 부분 실패 미격리를 잡았다.
+- 홈의 silent fail을 toast와 패널 메시지로 표면화했다.
+- DART 응답 status 체크 누락 버그, page.tsx 본체의 unhandled throw 두 건이 검증 중에 추가로 드러나서 같이 처리했다.
+
+원래 점검 결과만 보면 작업량이 작아 보였는데, 검증을 돌리면서 빠진 경로가 두 군데 더 발견됐다. 점검 → 수정 → 검증 사이클에서 검증이 가장 가치 있었던 단계였다. 단위 표기 작업이었던 [#036](https://velog.io/@dh82680/SlateKR-036-재무-지표-단위-표기-수정과-직렬화-버그)에서도 시작 직전에 화면을 한 번 본 게 직렬화 버그를 끌어냈는데, 이번에도 비슷한 결이다.
+
+---
+
+## 다음 작업
+
+DART API 호출 한도가 복구되는 대로 데이터 작업(B10, B11)을 이어간다. 단위 환산 누락 의심 케이스와 과거 EPS 누락 패턴 두 가지가 메모로 남아 있다.

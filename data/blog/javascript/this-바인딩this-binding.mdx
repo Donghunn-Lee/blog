@@ -1,0 +1,167 @@
+---
+title: "this 바인딩(this Binding)"
+date: 2025-06-10
+lastmod: 2026-10-15
+summary: "this는 자바스크립트에서 처음 접하면 충분히 햇갈릴 수 있는 개념이라고 생각한다. 나는 C, Java등을 전공 수업에서 배울 때 this를 접했고, 자바스크립트에서 역시 크게 낯설지 않았다. 함수를 호출할 때 this의 대상이 달라진다는 점에서 오는 혼란을 완전히 피"
+tags: ["JavaScript","this binding","JavaScript의 이해"]
+draft: false
+---
+
+>
+`this`는 자바스크립트에서 처음 접하면 충분히 햇갈릴 수 있는 개념이라고 생각한다. 나는 C, Java등을 전공 수업에서 배울 때 this를 접했고, 자바스크립트에서 역시 크게 낯설지 않았다. 함수를 호출할 때 this의 대상이 달라진다는 점에서 오는 혼란을 완전히 피할 순 없었고, 개념 정리의 필요성을 느꼈다.
+
+## 1. this 바인딩
+
+this는 JavaScript에서 함수가 호출될 때, 그 함수의 실행 컨텍스트가 생성되면서 함께 결정되는 특별한 객체 참조이다. 이 this가 가리키는 대상이 결정되는 과정을 **this 바인딩**이라고 한다.
+
+### 기본적인 this 바인딩
+
+```js
+// 전역 스코프에서의 this
+console.log(this);  // Window 객체 (브라우저)
+
+// 일반 함수에서의 this
+function normalFunction() {
+  console.log(this);  // Window 객체 (브라우저)
+}
+
+// 객체의 메서드에서의 this
+const obj = {
+  name: 'Object',
+  sayName() {
+    console.log(this.name);  // 'Object'
+  }
+};
+```
+
+---
+
+## 2. this 바인딩의 규칙
+
+### 1. 기본 바인딩 (Default Binding)
+
+- 함수를 일반적인 방식으로 호출할 때 적용
+- this는 전역 객체를 가리킴
+- 엄격 모드('use strict')에서는 undefined
+
+```js
+function defaultBinding() {
+  console.log(this);
+}
+
+defaultBinding();  *// Window 객체 (브라우저)*
+```
+
+### 2. 암시적 바인딩 (Implicit Binding)
+
+- 객체의 메서드로 호출될 때 적용
+- this는 해당 객체를 가리킴
+
+```js
+const person = {
+  name: 'John',
+  
+  sayName() {
+    console.log(this.name);
+  }
+};
+
+person.sayName();  *// 'John'*
+```
+
+### 3. 명시적 바인딩 (Explicit Binding)
+
+- call(), apply(), bind() 메서드를 사용할 때 적용
+- this는 명시적으로 지정한 객체를 가리킴
+
+```js
+function sayName() {
+  console.log(this.name);
+}
+
+const person = { name: 'John' };
+
+sayName.call(person);   *// 'John'*
+sayName.apply(person);  *// 'John'*
+
+const boundSayName = sayName.bind(person);
+boundSayName();        *// 'John'*
+```
+
+### 4. new 바인딩 (New Binding)
+
+- 생성자 함수로 호출될 때 적용
+- this는 새로 생성된 객체를 가리킴
+
+```js
+function Person(*name*) {
+  this.name = name;
+}
+
+const john = new Person('John');
+
+console.log(john.name);  *// 'John'*
+```
+
+---
+
+## 3. 화살표 함수와 this
+
+화살표 함수는 자신만의 this를 가지지 않고, 자신이 정의된 스코프의 this를 사용한다.
+
+```js
+const obj = {
+  name: 'Object',
+  regularFunction() {
+    setTimeout(function() {
+        console.log(this.name);  // undefined
+      }, 100);
+  },
+  arrowFunction() {
+    setTimeout(() => {
+      console.log(this.name);  // 'Object'
+    }, 100);
+  }
+};
+```
+
+---
+
+## 4. this 바인딩의 주의사항
+
+### 콜백 함수에서의 this
+
+```js
+const obj = {
+  name: 'Object',
+  names: ['John', 'Jane'],
+  printNames() {
+    this.names.forEach(function(name) {
+      console.log(this.name, name);  // this.name은 undefined
+    });
+  }
+};
+```
+
+### 2. 메서드 할당 시 this
+```js
+const obj = {
+  name: 'Object',
+  sayName() {
+    console.log(this.name);
+  }
+};
+
+const sayName = obj.sayName;
+sayName();  // undefined
+```
+
+---
+
+## **5. 정리**
+
+`this` 바인딩은 JavaScript에서 **함수가 호출되는 방식에 따라 결정**되는 중요한 개념입니다. 기본 바인딩, 암시적 바인딩, 명시적 바인딩, new 바인딩 등 다양한 규칙이 있으며, 화살표 함수는 이러한 규칙에서 예외적인 동작을 합니다.
+
+`this`는 함수가 호출될 때마다 새롭게 바인딩되며, 이는 함수가 어디에 정의되었는지가 아니라 **어떻게 호출되었는지**에 따라 결정됩니다. 이는 다른 프로그래밍 언어와는 다른 JavaScript만의 특징으로, 처음에는 혼란스러울 수 있지만, 이러한 유연성은 다양한 프로그래밍 패턴을 구현할 수 있게 해줍니다.
+
+특히 객체지향 프로그래밍에서 메서드가 자신이 속한 객체를 참조할 수 있게 해주는 중요한 메커니즘이며, 이벤트 핸들러나 콜백 함수에서 컨텍스트를 유지하는 데에도 필수적입니다. 이러한 `this`의 특성을 이해하고 적절히 활용하면, 더 유연하고 재사용 가능한 코드를 작성할 수 있습니다.

@@ -1,0 +1,213 @@
+---
+title: "[AimTest #09] 종료 유예 타이머와 타겟 색상 변경 기능 추가"
+date: 2025-10-13
+lastmod: 2026-11-05
+summary: "기존의 '처리되지 않은 타겟 10개 도달시 종료' 기준은 사용자가 한창 집중력이 오른 시점에 한 번의 실수로 바로 끝나버리는 아쉬움이 있었다. 이를 어떻게 개선할 수 있을까 고민하다가, 단순히 개수를 늘리는 것만으론 재미가 살지 않을 것 같아서 '3초 이상 10개 이상"
+tags: ["AimTest","Aliasing","design"]
+draft: false
+---
+
+> 기존의 '처리되지 않은 타겟 10개 도달시 종료' 기준은 사용자가 한창 집중력이 오른 시점에 한 번의 실수로 바로 끝나버리는 아쉬움이 있었다. 이를 어떻게 개선할 수 있을까 고민하다가, 단순히 개수를 늘리는 것만으론 재미가 살지 않을 것 같아서 '3초 이상 10개 이상 유지 시 종료' 라는 규칙을 생각해냈다.
+
+## 1. 기존의 종료 방식의 아쉬움
+기존 게임 종료 기준은 짧게 언급했듯이 아래와 같았다.
+>#### 화면에 남아있는 타겟이 10개가 될 경우 즉시 종료
+
+그런데 이렇게 할 경우 아쉬운 점이 있었다.
+
+### 1) 한 번의 실수로 너무 싱겁게 아웃
+야구도 3번의 아웃이 있는데, 아무리 높은 수준의 순발력과 집중력을 요하는 게임일지라도 타겟 10개로는 너무 싱겁게 끝나는 경우가 많았다. 후반부(대략 45초 이후)에는 타겟이 매우 빠르게 생성된다. 그래서 한 번 MISS가 발생하면 연달아 실수하는 경우가 많아 고득점을 몇 초 남기고 곧바로 게임이 종료되는 경우가 많았다.
+
+실수하지 않는 것도 중요하지만, 실수하더라도 실력으로 만회할 수 있는 기회가 있다면 조금 더 재미있을 것 같다고 생각했다.
+
+### 2) 종료가 다가왔다는 긴박함 부여
+타겟이 빠르게 생성되는 시점에서 지금 화면의 타겟이 8개인지 9개인지 파악하는 것은 쉽지 않다. 그래서 '어라 잘못하면 바로 아웃이겠는데?' 하는 생각을 할 겨를도 없이 바로 게임이 끝나버리는 게 너무 아쉽게 느껴졌다.
+
+종료 기준이 임박하면 무언가 신호를 줘서 사용자에게 마지막 스퍼트의 기회를 주면 더욱 게임이 재미있게 느껴질 것이라고 생각했다.
+
+---
+
+## 2. 새로운 기준을 적용한 이유
+>#### 화면에 타겟이 10개이상 남은 상태가 3초 유지될 경우 종료
+
+고민끝에 바뀐 기준은 이렇다. 하지만 이 규칙을 생각한 더욱 핵심적인 이유는 바로 이 기능을 추가하기 위함이었다.
+
+>#### 타겟이 10개 이상이 된 시점부터 매 초 타겟의 색상이 바뀐다. 점점 붉은색으로..
+
+기존엔 게임이 종료되면 타겟의 색상이 모두 타겟 중심원의 색과 같은 진한 빨간색으로 바뀌었다. 게임 종료를 결과 메뉴만이 아니라 시각적으로 더 알리고자 추가한 기능이다.
+
+시각적인 요소를 추가하고자 고민했던 기능인 만큼, 이번 룰 변경도 사실 **종료 직전에 타겟의 색상이 바뀌어 경고**를 할 수 있다면 좋겠다는 생각을 시작으로 나온 생각이었다.
+
+최종적으로 정리하자면 다음과 같다
+
+### 기존 종료 기준
+- 화면에 남아있는 타겟이 10개 도달 시 종료
+- 종료와 함께 남아있는 타겟의 색상이 빨간색으로 바뀜
+
+### 변경된 종료 기준
+- 화면에 남은 타겟이 10개 도달한 시점부터 3초 경과 시 종료
+- 3초의 유예 시간이 주어진 동안, 매 초 타겟의 색상 변경
+  - `n`초에 타겟 수가 10개에 도달한 경우,
+  - `n` ~ `n + 1`초 : 주황색
+  - `n + 1`초 ~ `n + 2`초 : 붉은 빛 주황색
+  - `n + 2`초 ~ `n + 3`초 : 연한 빨간색
+  - 3초 경과(게임 종료) : 빨간색
+- 3초가 지나기 전 타겟을 9개 이하로 줄일 경우, 타이머가 초기화되며 10개 도달 시 다시 3초 타이머 시작
+
+---
+
+## 3. 적용
+게임을 컨트롤하는 작업들을 `useGame` (`useGameState`에서 변경)훅에 모아뒀기 때문에, 여기에서 함수를 만드는 것이 적절하다고 판단했다.
+
+구현 방법에 대해 고민한 방법은 두 가지다.
+
+#### 1) setTimeout 3개 중첩
+말 그대로 3개의 타임아웃을 이용해 색상을 변경하는 방법을 가장 먼저 떠올렸다.
+
+타겟 10개가 확인되면 3개의 타임아웃을 실행하는데, 먼저 즉시 색상을 변경하고 다음은 1초 뒤, 2초 뒤, 3초 뒤에 각각 색상이 변경되고 게임이 종료되도록 하는 것이다.
+
+간단히 적자면 이런 구조다.
+
+```ts
+const firstTimerRef = useRef<number | null>(null)
+const secondTimerRef = useRef<number | null>(null)
+const thirdTimerRef = useRef<number | null>(null)
+
+
+const startGraceTimer = () => {
+  // 즉시 색상 번경 - 주황색
+  setTargetColor('orange')
+
+  // 1초 뒤 진한 주황색
+  const firstTimerRef.current = window.setTimeout(() => {
+    setTargetColor('dark-orange')
+  }, 1000)
+
+  // 2초 뒤 연한 빨간색
+  const secondTimerRef.current = window.setTimeout(() => {
+    setTargetColor('light-rede')
+  }, 1000)
+
+  // 3초 뒤 빨간색, 게임 종료
+  const thirdTimerRef.current = window.setTimeout(() => {
+    setTargetColor('orange')
+  }, 1000)
+
+}
+```
+
+이런 식으로 타이머를 설정하고 참조값들을 저장해둔다.
+그 다음 타이머 취소가 필요하면 참조를 이용해 타이머 스케줄러에서 스케줄들을 모두 제거한다.
+
+#### 1) 시간 경과에 따른 색상 변경
+두 번째 방법은 시간 경과에 따른 방법이다. 결론 먼저 얘기하자면 1번이 아닌 바로 이 방법을 적용했다.
+
+어떤 방식인지 코드로 먼저 살펴보자.
+```ts
+// useGame.ts
+
+// 3초 타이머 시작 시간(종료 유예 시간)
+const [graceStartAt, setGraceStartAt] = useState<number | null>(null);
+
+// 타이머 시작
+const triggerGraceTimer = useCallback(() => {
+  if (graceStartAt || !isGameStarted || isGameOver) return;
+  setGraceStartAt(Date.now());
+  endTimeoutRef.current = window.setTimeout(() => {
+    endGame();
+    endTimeoutRef.current = null;
+  }, 3000);
+}, [graceStartAt, isGameStarted, isGameOver, endGame]);
+
+// 타이머 취소
+const cancelGraceTimer = useCallback(() => {
+  setGraceStartAt(null);
+
+  if (endTimeoutRef.current) {
+    clearTimeout(endTimeoutRef.current);
+    endTimeoutRef.current = null;
+  }
+}, []);
+```
+
+메인 컴포넌트에서 타겟 개수를 확인하고, 10개가 되는 시점에 `triggerGraceTimer`를 실행시킨다.
+
+그럼 게임을 종료시키는 함수가 3초의 딜레이가 설정된 타임아웃으로 생성된다.
+
+타이머 취소는 앞서 소개한 방법대로 타임아웃의 ref를 참조해서 취소한다.
+
+그리고 이 `graceTime`을 가지고 `TargetRenderer`의 `render`함수 안에서 유틸함수로 색상을 결정한다.
+```ts
+const render = () => {
+  if (!ctxRef.current) return;
+
+  // 시간에 따른 타겟 색상 반영
+  const targetColor = decideTargetColor(isGameOver, graceStartAt);
+
+  applyCanvasTransform(ctxRef.current, canvas.width, canvas.height, position);
+  targets.forEach((t) => renderTarget(t, targetColor));
+  ctxRef.current.restore();
+
+  requestAnimationFrame(render);
+};
+```
+
+다음처럼 경과 시간을 가지고 색상을 결정하는 유틸 함수를 구현해 추가했다.
+```ts
+// utils/target.ts
+
+// 종료 유예 시간 타겟 색상 결정 유틸
+export const decideTargetColor = (
+  isGameOver: boolean,
+  graceStartAt: number | null
+) => {
+  if (isGameOver) return CANVAS_COLORS.target.expired;
+
+  if (graceStartAt !== null) {
+    const elapsed = (Date.now() - graceStartAt) / 1000;
+    if (elapsed < 1) return CANVAS_COLORS.target.warning; // 0~1s
+    if (elapsed < 2) return CANVAS_COLORS.target.danger; // 1~2s
+    return CANVAS_COLORS.target.critical; // 2~3s
+  }
+
+  return CANVAS_COLORS.target.base; // 기본
+};
+```
+
+최종적으론 다음 영상처럼 잘 적용됐다.
+![](/static/images/velog/86595416-c3b9-4c36-8c9f-27e50f95833f-image.gif)
+
+---
+
+
+
+## 4. 새롭게 발생한 문제점
+이렇게 변경된 종료 기준과 시각 효과를 순조롭게 구현했는가 싶었는데, 테스트 중 문제점을 파악하고 말았다.
+
+### 앨리어싱? (Aliasing)
+<div style={{display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center'}}>
+  <img src="/static/images/velog/c04799f9-f98c-45f9-aab9-344420e00a89-image.png" width="30%" height="25%" />
+  <img src="/static/images/velog/daf728d7-5146-4ab6-877d-0a08bdbd1990-image.png" width="35%" height="25%" />
+</div>
+
+게임 중후반부에 실수를 반복하여 3초 타이머에 여러 번 진입하게 되면, 색상이 바뀌었다가 다시 원래대로 돌아오기를 몇 번쯤은 반복하게 된다. 이 과정에서 이상한 점을 포착하고 말았다.
+
+바로 색상 변경이 잦아지면 위 이미지처럼 **타겟의 테두리가 오돌토돌하게 거칠어진다**는 것이다.
+테스트 해 본 바로는 4번정도 타이머 진입과 복귀, 즉 색상 변경과 초기화를 반복하면 보려고 하면 어렵지 않게 발견할 수 있는 정도로 변화가 생겨났다.
+
+찾아보니 이 현상을 **앨리어싱(Aliasing)** 이라고 하는 듯하다. Canvas 등의 화면에 픽셀단위로 이미지를 그리는 도구를 사용할 때, 픽셀의 크기와 그리고자 하는 선의 굵기 단위가 딱 맞아떨어지지 않는 경우에 이전의 잔상이 남고, 그 잔상이 중첩되어 선명하지 않은 선이 도드라지게 보이는 현상이라고 간단하게 이해했다.
+
+내 경우에는 그리는 대상이 우선 원이고, 기존엔 아무런 문제가 없었지만 색상을 여러 번 적용하는 과정에서 검정 테두리 영역을 내부의 색상이 침범하고, 그게 누적되는 것이지 않을까 우선 추측중이다. 간단히 적용해볼 수 있는 방법은 몇 개 해봤는데 개선이 되지 않아서, 추후에 다시 처리하기로 했다.
+
+만족스럽게 구현했는데 마무리가 찝찝해서 아쉬울 따름이다.
+
+---
+
+## 4. 정리
+생산적이지도 않고, 배포도 했지만 많은 유저를 유입할 수 없는 서비스이지만 이렇게 완성도를 높여가는 것이 재미있어서 다행이라고 생각한다.
+
+우선 목표로 했던 기능을 의도한 대로 잘 구현할 수 있어서 기분이 좋다. 새로운 문제점이 남았지만, 그동안 이름만 어디서 몇 번 들어봤던 엘리어싱, 안티 엘리어싱 이런 이름에 대한 문제를 직접 처리해본다고 생각하니 동시에 흥미가 돋는다.
+
+간단히 찾아보고 나온 유력한 해결방법은 맵을 그리는 **메인 렌더와 타겟을 그리는 렌더를 지금처럼 이원화하지 않고 통합**시켜서 이전의 잔상을 매번 클리어하고 다시 지우도록 하면 될 것 같은데 이건 또 대작업이라.. 벌써 약간 피곤하긴 하네.
+
+아무튼 되는 데까지는 이 프로젝트를 더 개선해나갈거다.  새로운 프로젝트도 같이 시작하면서 말이다.

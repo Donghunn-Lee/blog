@@ -1,0 +1,111 @@
+---
+title: "[AimTest #22] CRA에서 Vite로 — 툴체인 교체와 ESLint · CI"
+date: 2026-10-18
+lastmod: 2026-11-01
+summary: "지난 글에서 README를 코드와 대조하다 수치 오류와 과장, 그리고 게임 중 TIME이 멈춰 있는 결함을 찾았고, README를 고치기 전에 코드부터 손보기로 했다. 그 첫 세션이 툴체인이다. 코드를 고치는 세션보다 앞에 둔 이유는 하나다. 프로젝트의 빌드 도구인 C"
+tags: ["AimTest","ESLint","github actions","typescript","vite"]
+draft: false
+---
+
+지난 글에서 README를 코드와 대조하다 수치 오류와 과장, 그리고 게임 중 TIME이 멈춰 있는 결함을 찾았고, README를 고치기 전에 코드부터 손보기로 했다. 그 첫 세션이 툴체인이다. 코드를 고치는 세션보다 앞에 둔 이유는 하나다. 프로젝트의 빌드 도구인 CRA(`react-scripts`)가 2025년 2월에 공식 종료된 상태라 `package.json` 첫 줄에서부터 보이는 항목이었고, 이걸 두고 ESLint나 테스트를 손보면 Vite로 옮길 때 같은 일을 두 번 하게 되기 때문이다.
+
+계획은 CRA → Vite, TypeScript 4.9 → 5.x, ESLint 설정 정합, GitHub Actions CI였다. 결과는 TypeScript가 5가 아니라 6.0이 됐고, ESLint는 10으로 올리면서 플러그인 하나를 뺐으며, 계획에 없던 헬스체크 수정이 하나 끼어들었다. 시작하면서 라이브에서 TIME이 0에 멈춰 있는 것도 확인해, 지난 글에서 "추정"으로 뒀던 결함은 사실로 확정됐다.
+
+---
+
+## CRA에 실제로 기대고 있던 것
+
+옮기기 전에 CRA 전용 기능을 어디서 쓰는지부터 셌다. 4,500줄짜리 프로젝트라 직접 grep으로 훑을 수 있는 규모였다.
+
+| 확인 항목 | 결과 |
+|---|---|
+| `process.env.REACT_APP_*` | 사용처 0 |
+| `%PUBLIC_URL%` · 서비스워커 · `web-vitals` | 사용처 0 |
+| CRACO alias 8개 | `@/` 하나만 사용, 나머지 7개 미사용 |
+| Jest 설정 · 테스트 파일 | 0개 |
+
+결과적으로 CRA는 빌드만 해주고 있었다. 바뀐 것은 설정 파일 층에 머물렀고 `src/`와 `api/` 소스는 한 줄도 건드리지 않았다.
+
+```
+전                                   후
+public/index.html (CRA 템플릿)   →   index.html (루트, 모듈 스크립트 한 줄 추가)
+craco.config.js (alias 8개)      →   vite.config.mts (alias 1개)
+tsconfig: es5 · node 해석        →   ES2022 · bundler 해석
+craco start / build              →   vite / tsc --noEmit && vite build
+```
+
+## 버전을 어디까지 올릴지
+
+TypeScript는 CRA가 4.9에 묶어 두고 있었다. 최신은 7.0이지만 "최신에서 한두 단계 전"을 기준으로 두고 봤다.
+
+| 후보 | 판정 |
+|---|---|
+| TypeScript 7.0 | 기각. `typescript-eslint`의 지원 범위가 6.1 미만, lint가 안 돎 |
+| **TypeScript 6.0** | **채택.** 5.x 코드가 그대로 돌고, 7.0에서 제거될 옵션(`target: es5` · `moduleResolution: node` · `baseUrl`)을 오류로 올려줌. 어차피 Vite용으로 다시 쓸 tsconfig라 같이 해결 |
+| TypeScript 5.9 | 기각. 다음에 tsconfig를 또 고쳐야 함 |
+| ESLint 9 유지 | 기각. 2026년 8월에 지원 종료 |
+| **ESLint 10** | **채택.** 단, `eslint-plugin-react`가 10을 지원하지 않아(마지막 배포 2025년 4월) 제거. 잃는 규칙은 `jsx-key` 정도이고 `prop-types`류는 TypeScript가 대신 잡음 |
+
+Node도 같이 24로 올렸다. Vite 8의 최소 요구가 20.19이고, 다음 세션에 쓸 Vitest 5는 22.12 이상이며, Vercel 기본 런타임이 24라 맞출 곳이 하나였다.
+
+---
+
+## 한 번도 돌아간 적 없던 ESLint 설정
+
+저장소에는 `eslint.config.mjs`가 있었고 import 정렬, Prettier 연동까지 꽤 갖춰진 모양이었다. 그런데 이 파일이 import하는 패키지 세 개(`typescript-eslint` · `eslint-plugin-simple-import-sort` · `globals`)가 `package.json`에 없었다. 설정 파일은 있는데 실행이 안 되는 상태였고, 그동안 빌드 때 lint 경고를 내던 건 CRA에 내장된 `react-app` 설정이었다. 지난 이전 글에서 Vercel 빌드가 `react-hooks/exhaustive-deps` 경고로 실패했던 것도 이 내장 설정이 낸 것이었다. 알고 나니 조금은 충격이었다.
+
+CRA를 빼면 그 내장 설정도 같이 사라지므로, 이번에 설정 파일을 실제로 돌아가게 만드는 게 R3의 내용이 됐다. 빠진 패키지를 설치하고, 설정에서 쓰지 않는 패키지 셋을 지우고, CRA가 해주던 훅 규칙 두 개(`rules-of-hooks` · `exhaustive-deps`)는 `eslint-plugin-react-hooks`로 이어받았다. 이 플러그인의 `recommended` 프리셋은 React Compiler 규칙까지 켜는데, 지금 코드에서 12건이 걸려서 프리셋은 쓰지 않고 규칙 두 개만 명시했다. 12건은 알려진 한계로 적어 두고, 그중 `immutability` 2건은 다음에 잠재 버그를 손볼 때 같은 지점인지 확인할 계획이다.
+
+---
+
+## CI
+
+GitHub Actions는 워크플로 하나다. main에 push하거나 PR이 열리면 Node 24에서 `npm ci` → 타입 검사(web + api) → lint → build를 돌린다. 첫 실행은 25초에 통과했다. 다음 세션에 테스트가 생기면 그 단계를 사이에 끼울 자리다.
+
+---
+
+## 계획에 없던 헬스체크 수정
+
+헬스체크 수정은 계획에 없던 것이다. 로컬 개발 서버에서 메인 화면의 서버 상태가 Online으로 떴다가 곧 Offline으로 바뀌는 현상이 보였다. 원인은 서버 상태를 확인하는 effect에 cleanup이 없는 것이었다. 개발 모드의 StrictMode가 effect를 일부러 두 번 실행하니 헬스체크 요청이 두 개 나가고, 늦게 끝난 쪽이 3초 타임아웃에 걸려 먼저 온 결과를 덮어썼다. 배포에서는 요청이 하나라 드러나지 않았지만, 앞으로 며칠 개발하는 동안 매번 볼 현상이라 다음 세션으로 미루지 않고 그 자리에서 고쳤다. 타임아웃도 3초에서 10초로 늘렸는데, 로컬 함수 서버의 첫 응답이 2초 가까이 걸려 3초는 여유가 없었다.
+
+```
+전   effect 실행 → checkHealth() → setServerStatus
+     (두 번 실행되면 두 결과가 모두 반영됨)
+
+후   effect 실행 → AbortController 생성 → checkHealth(signal)
+     cleanup에서 abort() → 취소된 요청의 결과는 무시
+```
+
+---
+
+## 전후
+
+| 항목 | 전 | 후 |
+|---|---|---|
+| 빌드 도구 | CRA 5.0.1 + CRACO | Vite 8.3 |
+| TypeScript | 4.9.5 | 6.0.3 |
+| ESLint | 8.57, 설정 파일 실행 불가 | 10.13, `npm run lint` 0 오류 |
+| CI | 없음 | GitHub Actions, 첫 run 통과 |
+| `node_modules` | 908개 | 267개 |
+| JS 번들(gzip) | 132 kB | 152 kB |
+
+번들이 커진 건 Vite 때문이 아니다. lock 파일을 새로 만들면서 `^` 범위의 패키지(framer-motion · react 등)가 최신으로 올라간 몫이고, 같은 lock으로 비교하면 130 kB로 CRA보다 조금 작았다. 전부 patch · minor 업데이트라 그대로 뒀다.
+
+---
+
+## 정리
+
+- **R9 종결** — CRA → Vite 8, TypeScript 6.0. 소스 무변경, 설정 파일 10개
+- **R3 종결** — ESLint 10. 실행된 적 없던 설정 파일을 실제로 돌아가게 함. React Compiler 규칙 12건은 한계로 기록
+- **R7 종결** — GitHub Actions CI, Node 24
+- **헬스체크 수정** — StrictMode 이중 실행에서 드러난 effect cleanup 누락. 계획 밖이지만 그 자리에서 처리
+- **TIME 결함 확정** — 라이브에서 0 고정 확인, 다음 세션에서 수정
+
+툴체인 교체 자체는 반나절 안에 끝났다. 실제로 CRA에 기대고 있던 게 거의 없어서였다. 그보다는 ESLint 설정처럼 "있는 줄 알았는데 돌아간 적 없던" 것들이 드러난 세션이었고, 그런 걸 하나씩 참으로 만드는 게 이번 재정비의 내용이다.
+
+## 다음 작업
+
+- 순수 함수 테스트(R6) — Vitest 5로 히트 판정 · 스폰 간격 · 종료 유예 색상 · 컨테이너 경계를 먼저 고정
+- 게임 중 TIME 결함(R1) — `gameActions`와 렌더 루프 반환 객체의 참조 안정화
+- 타겟 목록의 state 경유 제거(R2) — 종료 유예 트리거가 state에 의존하는 부분의 대체 경로를 먼저 조사
+- 프레임 타임 · `GameWorld` 리렌더 횟수를 전후로 측정

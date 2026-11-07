@@ -1,0 +1,225 @@
+---
+title: "[SlateKR #036] 재무 지표 단위 표기 수정과 직렬화 버그"
+date: 2026-05-22
+lastmod: 2026-11-06
+summary: "이번 작업 원래 목표는 B9 — 재무 슬레이트 단위 표기 개선이었다. 네이버 방식대로 ROE(%) / EPS(원) / PER(배) 같은 식으로 라벨에 단위를 병기하기만 하면 되는 가벼운 작업으로 생각했다.근데 시작 직전, 작업 범위를 잡으려고 현대차 분기 모드 화면을 "
+tags: ["BigInt","PostgreSQL","neon","SlateKR"]
+images: ["/static/images/velog/4a7b08ab-5cc5-441b-9e7c-d7997f22d457-image.png"]
+draft: false
+---
+
+이번 작업 원래 목표는 B9 — 재무 슬레이트 단위 표기 개선이었다. 네이버 방식대로 ROE(%) / EPS(원) / PER(배) 같은 식으로 라벨에 단위를 병기하기만 하면 되는 가벼운 작업으로 생각했다.
+
+근데 시작 직전, 작업 범위를 잡으려고 현대차 분기 모드 화면을 띄워봤다가 이상한 걸 봤다.
+
+<img src="/static/images/velog/4a7b08ab-5cc5-441b-9e7c-d7997f22d457-image.png" alt="현대차 2025 Q4 매출이 비정상적으로 긴 음수로 표시된 화면" style={{maxWidth: '100%', height: 'auto'}} />
+
+2025 Q4 매출이 `-4,440,776,100,000,048,400,000,000,000,000,000`. 자릿수가 30개를 넘는다. 어떤 기업도 가질 수 없는 숫자다. 같은 행에서 영업이익, 당기순이익도 같은 자릿수의 음수. ROE는 `-585929204423.71`.
+
+원래 작업은 잠깐 보류하고 원인부터 잡기로 했다.
+
+---
+
+## 깨진 값의 패턴 확인
+
+원인 파악은 단계적으로 접근했다. `financial_statements`에서 비정상적인 값이 들어가 있는지부터 확인했다.
+
+```sql
+SELECT ticker, year, quarter, report_type, revenue, operating_profit, net_income
+FROM financial_statements
+WHERE ABS(revenue) > 1000000000000000  -- 1000조 초과
+LIMIT 20;
+```
+
+이상값이 있긴 했지만(이건 별도 문제로 메모해뒀다), 현대차는 깔끔했다. 2025 Q1~Q3 분기 데이터, 그리고 Q4 자리에 들어가는 annual 데이터 모두 정상값.
+
+| year | quarter | report_type | revenue        |
+|------|---------|-------------|----------------|
+| 2025 | 1       | quarter     | 44,407,761,000,000 |
+| 2025 | 2       | quarter     | 48,286,677,000,000 |
+| 2025 | 3       | quarter     | 46,721,448,000,000 |
+| 2025 | 4       | annual      | 186,254,472,000,000 |
+
+DB는 정상인데 화면은 깨져 있다. 그럼 깨짐은 lib 레이어 어딘가에서 일어나고 있다는 뜻이다.
+
+그러다 화면값을 다시 봤다. `-4,440,776,100,000,048,400,...`. 앞의 `4,440,776,1`이 Q1 revenue `44,407,761`과 자릿수가 같고, 그 뒤 `,000,048,4`가 Q2 revenue `48,286,677`의 앞자리와 이어진다. 빼기 결과 같은 게 아니다. **숫자가 문자열로 이어붙은 형태**다.
+
+이제는 짐작할 수 있었다. `@neondatabase/serverless`가 bigint를 string으로 반환하고 있는 거 아닌가.
+
+---
+
+## 진짜 원인
+
+`lib/financials.ts`에서 Q4 분기값은 `annual - (Q1 + Q2 + Q3)` 환산식으로 만든다. 코드는 row 값을 number로 가정하고 그대로 산술 연산을 한다.
+
+```ts
+const sumFlow = (rows, field) => {
+  let total = 0;
+  for (const row of rows) {
+    total += row[field];  // string이면 여기서 concat
+  }
+  return total;
+};
+```
+
+`total`은 `0`(number)으로 시작했지만, 첫 번째 `+=`에서 `0 + "44407761000000"`이 되면서 `"044407761000000"`(string)로 바뀐다. 그 다음부터는 계속 string concat. JS의 암묵적 타입 변환 때문에 에러 없이 조용히 깨진다.
+
+PostgreSQL의 `bigint`(INT8) 컬럼은 JS Number의 안전 정수 한계(2^53 ≈ 9 × 10^15)를 넘을 수 있어서, 정밀도 손실을 막기 위해 드라이버가 기본적으로 string으로 반환한다. 의도적인 동작이긴 한데, 우리 코드는 이걸 모르고 있었다.
+
+영향 범위가 작지 않다. Q4 환산뿐 아니라 `calculateDerivedMetrics`의 ROE/ROA/마진/부채비율 — 산술이 들어가는 모든 경로가 잠재적으로 잘못된 값을 만들고 있었다. 화면에 그럴듯한 숫자가 찍혔다고 정상은 아닌 거다. Q4처럼 자릿수가 거대하게 부풀려진 경우만 눈에 띄었을 뿐이다.
+
+---
+
+## 첫 시도, 해결 실패
+
+공식 문서(`@neondatabase/serverless` CONFIG.md)에서 `types.getTypeParser` 옵션을 찾았다. pg-types의 INT8 파서를 Number로 오버라이드하는 패턴이 깔끔하게 정리되어 있어서 그대로 적용했다.
+
+```ts
+const sql = neon(process.env.DATABASE_URL!, {
+  types: {
+    getTypeParser: (oid, format) => {
+      if (oid === PgTypes.builtins.INT8) return (val) => Number(val);
+      return PgTypes.getTypeParser(oid, format);
+    },
+  },
+});
+```
+
+타입 체크 통과. 화면 다시 띄워봤는데 — 그대로다. 여전히 30자리 음수가 찍히고 있다.
+
+로그를 박아서 확인해보니, INT8 파서 등록은 됐는데 호출이 한 번도 일어나지 않았다. `types.getTypeParser` 자체가 안 먹는 거다.
+
+원인은 `neon()`의 동작 방식에 있었다. **`neon()`은 PostgreSQL wire protocol을 쓰지 않는다.** Neon의 HTTP API를 호출하고 JSON 응답을 파싱하는 구조다. JSON에는 bigint 타입이 없으니 서버 쪽에서 미리 string으로 변환해서 보낸다. `pg-types` 기반 type parser 훅은 wire protocol을 쓰는 WebSocket 기반 `Pool`/`Client`에서만 동작하고, HTTP 클라이언트에는 적용되지 않는다.
+
+이런 제약은 공식 문서에 명시되어 있지 않아서, 코드와 로그로 직접 확인하고 나서야 알았다.
+
+---
+
+## 결국 후처리 레이어로
+
+타입 파서 인프라에 의존할 수 없으니, 다른 진입점을 찾았다. `neon()`에 `fullResults: true` 옵션을 주면 응답에 컬럼 메타데이터(`fields`)가 포함된다. 거기서 `dataTypeID`로 INT8 컬럼을 골라내 `pool.query` 래퍼 레이어에서 직접 변환했다.
+
+```ts
+const sql = neon(process.env.DATABASE_URL!, { fullResults: true });
+
+export const pool = {
+  query: async <T>(queryStr, params): Promise<[T, unknown]> => {
+    const result = await sql.query(queryStr, params);
+
+    const bigintCols = result.fields
+      .filter((f) => f.dataTypeID === 20)
+      .map((f) => f.name);
+
+    if (bigintCols.length > 0) {
+      for (const row of result.rows) {
+        for (const col of bigintCols) {
+          if (typeof row[col] === "string") {
+            row[col] = Number(row[col]);
+          }
+        }
+      }
+    }
+
+    return [result.rows as T, null];
+  },
+};
+```
+
+`pool.query`는 모든 DB 조회의 공통 진입점이라, 여기서 한 번만 처리하면 다른 lib 파일은 손댈 필요가 없다. 기존 `[rows, null]` 시그니처도 그대로 유지된다.
+
+다시 화면을 띄웠다. Q4 매출이 `468,386억원`. ROE도 `0.90%`. 전부 정상 자릿수로 떨어졌다.
+
+<img src="/static/images/velog/4d855c08-f2a4-4b16-8535-888d4b170831-image.png" alt="bigint 패치 적용 후 정상값으로 복구된 현대차 Q4 화면" style={{maxWidth: '100%', height: 'auto'}} />
+
+
+한국 상장사 재무 데이터는 어떤 항목도 `Number.MAX_SAFE_INTEGER`(약 9 × 10^15)를 넘지 않는다. 삼성전자 연간 매출 333조 = `3.33 × 10^14` 정도로, 안전 범위 안에 충분히 들어온다. Number 변환이 위험한 사이즈가 아니다.
+
+원래 로드맵 B7 항목이 "음수 영업이익률 정책 결정" 이었는데, 그 때 본 음수가 이번 이슈였던 듯하다. 다른 영업 손실난 종목을 몇 개 더 찾아보니, 모두 정상이었다. 내가 애초에 잘못 적은 것이지만, 항목이 하나 줄었다.
+
+---
+
+## MySQL 시절엔 없었던 문제
+
+문제를 해결하고 나서, 문득 한 가지 생각이 들었다. 이 산술 로직은 #025 재무 슬레이트 작업 때부터 있던 코드인데, 그땐 MySQL이었다. 그땐 멀쩡했다는 뜻이다.
+
+mysql2 드라이버는 BIGINT를 기본적으로 Number로 반환한다. 정밀도 손실이 우려되는 경우 supportBigNumbers/bigNumberStrings 옵션을 명시적으로 켜야 string으로 받게 된다. 옵션 안 켰으니 그동안은 자연스럽게 number로 들어왔고, 코드도 그 가정으로 작성됐다.
+
+[#028](https://velog.io/@dh82680/SlateKR-028-배포-시작-EC2가-아닌-Vercel-Neon으로)에서 Neon PostgreSQL로 마이그레이션하면서 드라이버 동작 방식이 바뀌었고, 그게 산술 경로의 잠재 버그를 깨운 거다. 마이그레이션 당시엔 [rows, null] 시그니처를 호환하는 데만 신경 썼고, 컬럼 직렬화 차이까지 체크하지 못했다.
+
+---
+
+## 검증 중 EPS오류 확인
+
+값이 정상 자릿수로 돌아왔으니 다른 지표도 점검했다. 그러다 EPS 한 줄이 눈에 걸렸다.
+
+| 분기 | EPS    |
+|------|--------|
+| Q2   | 11,514 |
+| Q3   | 8,683  |
+| **Q4** | **36,088** |
+
+Q4만 다른 분기의 3~4배다. 옆의 annual 행 EPS(47,615)와 자릿수가 같다. 분기 환산이 안 된 거다.
+
+`buildQuarterlyPeriods`의 Q4 push 부분을 다시 보니, revenue/operating_profit/net_income은 `subFlow`로 환산하는데 EPS는 `annualRow.eps`를 그대로 넣고 있었다.
+
+```ts
+result.push({
+  // ...
+  eps: annualRow.eps,  // ← 환산 안 됨
+  bps: annualRow.bps,  // ← 이건 시점값이라 그대로가 맞음
+});
+```
+
+BPS는 기말 시점의 자본 / 발행주식수라 annual = Q4 기말이 맞다. 하지만 EPS는 기간 누적값(flow)이라 다른 flow 지표와 똑같이 환산이 필요하다. `sumFlow`의 field union에 `"eps"`를 추가하고, Q4 EPS를 `subFlow(annualRow.eps, sumFlow(qRows, "eps"))`로 계산하도록 바꿨다. PER도 영향받아서 derived EPS로 다시 계산.
+
+| 분기 | EPS (수정 후) |
+|------|---------------|
+| Q2   | 11,514        |
+| Q3   | 8,683         |
+| Q4   | **3,815**     |
+
+값이 살짝 작긴 한데, annual 47,615에서 Q1~Q3 합 32,273을 빼면 그대로 3,815다. 산식상 맞다. 현대차 2025 Q4가 실제로 부진했던 것뿐이고, 다른 flow 지표들(매출 25.2%, 영업이익 14.8%, 당기순이익 10.9%)과 EPS 비율(10.6%)이 내부 일관성을 갖는다.
+
+엄밀히는 Q4 BPS도 따로 생각해볼 여지가 있다. 4분기 기말 = 연간 기말이라 동일하다고 정리했지만, 이게 항상 맞는지는 다른 종목 케이스를 더 봐야 안다. 이번 작업에선 일단 두기로 했다.
+
+---
+
+## 그제야 원래 작업이었던 단위 표기 개선
+
+여기까지 와서야 원래 시작점이었던 B9로 돌아왔다. 작업 자체는 단순하다.
+
+이미 재무 요약표에는 단위 표기가 되어있다. [#26](https://velog.io/@dh82680/SlateKR-026-재무-요약-슬레이트-디테일과-BPS-백필)에서 단위 표기를 했는데, 여전히 조금 아쉬운 점이 있었다.
+
+네이버 증권 종목분석 화면을 보면 단위 병기 규칙이 명확하다. 상단에 글로벌 단위(`* 단위: 억원, 배, 주`)를 두고, 글로벌 단위와 **다른** 지표에만 행 라벨에 `(단위)`를 붙인다. 매출·영업이익처럼 글로벌과 같은 단위는 라벨에 단위를 안 붙인다.
+
+이 원칙을 글로벌만 있던 우리 12지표에 그대로 매핑했다.
+
+- `ROE(%)`, `ROA(%)`, `영업이익률(%)`, `순이익률(%)`, `부채비율(%)`
+- `EPS(원)`, `BPS(원)`
+- `PER(배)`, `PBR(배)`
+- 매출·영업이익·당기순이익·자산총계·자본총계는 라벨 변동 없음
+
+글로벌 표기는 `단위: 억원, %, 원, 배`에서 `단위: 억원 (별도 표기 없는 항목 기준)`으로 바꿨다. 어떤 단위가 있는지를 나열하는 것보다, 라벨에 없는 항목이 무슨 단위인지 알려주는 게 정보 가치가 높다.
+
+<img src="/static/images/velog/919847fc-bbc2-4273-b295-6157c6a92547-image.png" alt="단위 표기가 적용된 재무 슬레이트 (연간 모드)" style={{maxWidth: '100%', height: 'auto'}} />
+
+작업량으로 보면 가장 가벼운데, 사용자가 표를 읽을 때 머릿속에서 단위를 추론하는 부담이 사라진다. 이런 라벨 한 줄짜리 변경이 의외로 가독성에 영향이 크다.
+
+---
+
+## 정리
+
+- bigint 직렬화로 산술 경로가 전부 깨져 있었다. `neon()`의 HTTP 클라이언트 특성상 type parser 훅이 안 먹어서, `fullResults` + 메타데이터 기반 후처리로 해결했다.
+- EPS가 flow값임에도 Q4에서 환산되지 않고 있었다. 시점값(BPS)과 flow값(EPS)을 구분하는 게 핵심.
+- B9 단위 표기는 네이버 방식 그대로 매핑.
+- B7은 실재하지 않는 문제로 확인되어 폐기.
+
+원래 목표였던 단위 표기 자체는 십몇 분이면 끝났을 작업이었다. 근데 검증을 위해 화면을 한 번 더 본 게 직렬화 버그를 끌어냈고, 그걸 잡으면서 EPS 환산 누락도 같이 드러났다. 작업 시작 전에 화면을 한 번 보는 습관이 이번엔 꽤 큰 차이를 만들었다.
+
+bigint 직렬화 이슈는 특히 Neon HTTP 클라이언트의 type parser 비호환 부분이 공식 문서에 명시되어 있지 않아서, 같은 환경을 쓰는 사람이라면 한 번쯤 부딪힐 수 있는 함정이었다.
+
+---
+
+## 다음 작업
+
+다음은 검증 중에 메모해둔 두 가지로 이어진다. 일부 종목에서 발견된 단위 환산 의심 데이터(1000조 초과 케이스)와, 일부 종목별로 들쭉날쭉한 과거 EPS 누락 패턴의 원인을 파악하고 해결한다.

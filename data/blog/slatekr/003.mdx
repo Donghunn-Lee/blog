@@ -1,0 +1,133 @@
+---
+title: "[SlateKR #003] DB 스키마 설계 — 3개의 테이블"
+date: 2026-04-07
+lastmod: 2026-10-25
+summary: "이전 글 가져오고, PER/PBR은 직접 계산하는 방향으로.이번엔 그 결정을 실제 테이블 구조로 옮기는 작업이다.처음엔 더 많이 필요할 것 같았다. 종목 정보, 가격, 재무, 투자지표, 공시...항목을 나열하면 테이블이 5~6개는 돼 보였다.그런데 데이터 소스별로 역할"
+tags: ["architecture","data-design","db","mysql","schema","SlateKR"]
+draft: false
+---
+
+이전 글 #002에서 데이터 소스를 정리했다. pykrx는 OHLCV만, 재무 지표는 DART에서
+가져오고, PER/PBR은 직접 계산하는 방향으로.
+
+이번엔 그 결정을 실제 테이블 구조로 옮기는 작업이다.
+
+## 테이블 구성
+
+처음엔 더 많이 필요할 것 같았다. 종목 정보, 가격, 재무, 투자지표, 공시...
+항목을 나열하면 테이블이 5~6개는 돼 보였다.
+
+그런데 데이터 소스별로 역할을 명확히 나누고 나니 줄어들었다.
+
+| 테이블 | 역할 | 소스 |
+| --- | --- | --- |
+| `stocks` | 종목 기본 정보 | DART |
+| `daily_prices` | 일봉 OHLCV | pykrx |
+| `financial_statements` | 재무제표 + EPS/BPS/DPS | DART |
+
+PER/PBR/배당수익률은 별도 테이블로 두지 않는다.
+이유는 아래에서.
+
+## stocks
+```sql
+CREATE TABLE stocks (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticker      VARCHAR(10)  NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  market      ENUM('KOSPI', 'KOSDAQ') NOT NULL,
+  sector      VARCHAR(100),
+  corp_code   VARCHAR(20),
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+              ON UPDATE CURRENT_TIMESTAMP,
+
+  UNIQUE KEY uq_ticker (ticker),
+  INDEX idx_name (name),
+  INDEX idx_market (market)
+);
+```
+
+`corp_code`가 핵심이다. DART API는 종목코드가 아니라 자체 고유번호로
+조회한다. 이 값이 없으면 공시와 재무 데이터를 연결할 수 없다.
+
+## daily_prices
+```sql
+CREATE TABLE daily_prices (
+  id      INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticker  VARCHAR(10)     NOT NULL,
+  date    DATE            NOT NULL,
+  open    INT UNSIGNED    NOT NULL,
+  high    INT UNSIGNED    NOT NULL,
+  low     INT UNSIGNED    NOT NULL,
+  close   INT UNSIGNED    NOT NULL,
+  volume  BIGINT UNSIGNED NOT NULL,
+
+  UNIQUE KEY uq_ticker_date (ticker, date),
+  INDEX idx_ticker_date (ticker, date DESC)
+);
+```
+
+가격은 `DECIMAL`이 아닌 `INT`로 저장했다. 국내 주가는 원화 정수값이라
+소수점이 필요 없다. 스토리지도 더 효율적이다.
+
+인덱스는 `(ticker, date DESC)` 복합 인덱스가 핵심이다.
+종목 상세에서 "특정 종목의 최근 N일" 쿼리가 가장 자주 발생하는 패턴이기 때문이다.
+
+외래키는 의도적으로 걸지 않았다. 종목 존재 여부는 적재 스크립트에서
+애플리케이션 레벨로 보장한다. FK가 있으면 대량 적재 시 성능에 영향을 준다.
+
+## financial_statements
+```sql
+CREATE TABLE financial_statements (
+  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  ticker           VARCHAR(10) NOT NULL,
+  fiscal_year      SMALLINT    NOT NULL,
+  fiscal_quarter   TINYINT     NOT NULL,  -- 1~4, 연간은 0
+  report_type      ENUM('Q', 'A') NOT NULL,
+
+  revenue          BIGINT,
+  operating_profit BIGINT,
+  net_income       BIGINT,
+  total_assets     BIGINT,
+  total_equity     BIGINT,
+  total_debt       BIGINT,
+
+  eps              INT,
+  bps              INT,
+  dps              INT,
+
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  UNIQUE KEY uq_ticker_period (ticker, fiscal_year, fiscal_quarter, report_type),
+  INDEX idx_ticker_year (ticker, fiscal_year DESC)
+);
+```
+
+손익계산서와 재무상태표 외에 `eps`, `bps`, `dps`를 함께 저장한다.
+PER/PBR/배당수익률 계산에 필요한 값들이다.
+
+## financial_metrics 테이블을 두지 않은 이유
+
+처음엔 PER/PBR을 미리 계산해서 별도 테이블에 저장하는 방식을 생각했다.
+그런데 PER/PBR은 주가가 바뀔 때마다 값이 달라진다.
+
+```
+PER = 종가 / EPS
+PBR = 종가 / BPS
+배당수익률 = (DPS / 종가) * 100
+```
+
+EPS/BPS는 분기마다 바뀌고, 종가는 매일 바뀐다.
+미리 저장해봤자 금방 낡은 값이 된다.
+
+"현재 주가 기준 PER"을 보여주려면 조회 시점에 계산하는 게 맞다.
+계산은 Next.js의 `lib/` 계층에서 처리한다. 두 테이블 조회 결과를
+조합하는 것만으로 충분하고, 별도 테이블이 없으니 적재 스크립트도 단순해진다.
+
+## 설계 점검
+
+테이블이 세 개밖에 안 된다. 데이터 소스별로 역할을 나누고 나니
+오히려 단순해졌다. 지금 단계에서 필요한 건 다 담을 수 있다.
+
+다음은 실제로 pykrx와 DART를 붙여서 적재 스크립트를 작성하는 단계다.
+설계는 깔끔해 보이지만 실제 데이터를 넣어봐야 빠진 게 없는지 알 수 있다.

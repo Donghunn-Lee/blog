@@ -1,0 +1,322 @@
+---
+title: "[React] Context API — FE 개념 탐구 #026"
+date: 2026-04-28
+lastmod: 2026-10-09
+summary: "💡 핵심 요약Context API는 전역 상태 관리 도구가 아니라 props drilling을 우회해 데이터를 깊은 자식까지 내려보내는 전달 채널이다. 상태 자체는 useState/useReducer가 만들고, Context는 그걸 실어 나른다.Provider의 va"
+tags: ["React","context","frontend","propsdrilling","useContext","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- Context API는 전역 상태 관리 도구가 아니라 **props drilling을 우회해 데이터를 깊은 자식까지 내려보내는 전달 채널**이다. 상태 자체는 useState/useReducer가 만들고, Context는 그걸 실어 나른다.
+- Provider의 `value`가 `Object.is` 기준으로 바뀌면 그 Context를 구독하는 **모든 컴포넌트가 리렌더링된다.** memo로 감싸도 막을 수 없다.
+- 그래서 실무에서 Context는 "한 번에 다 묶지 말고, 변경 빈도와 관심사 단위로 쪼개서" 쓰는 게 기본이다. value가 객체일 땐 useMemo로 참조를 안정화하는 것도 잊지 말아야 한다.
+
+---
+
+## 목차
+
+> 1. [props drilling이라는 불편함](#props-drilling이라는-불편함)
+> 2. [Context는 상태 관리 도구가 아니다](#context는-상태-관리-도구가-아니다)
+> 3. [Provider, Consumer, 그리고 useContext](#provider-consumer-그리고-usecontext)
+> 4. [value가 바뀌면 무슨 일이 일어나는가?](#value가-바뀌면-무슨-일이-일어나는가?)
+> 5. [객체 value의 함정과 useMemo](#객체-value의-함정과-usememo)
+> 6. [Context를 책임 단위로 쪼개기](#context를-책임-단위로-쪼개기)
+> 7. [Provider 누락을 명시적으로 잡는 패턴](#provider-누락을-명시적으로-잡는-패턴)
+> 8. [Context의 자리 — 어디까지 쓰고 어디서부터 라이브러리인가](#context의-자리--어디까지-쓰고-어디서부터-라이브러리인가)
+
+---
+
+## props drilling이라는 불편함
+
+React의 데이터 흐름은 단방향이다. 부모에서 자식으로, props를 통해서만 내려간다.
+이 원칙은 데이터 흐름을 추적 가능하게 만들지만, 실제 코드에서는 종종 불편한 상황을 만든다.
+
+```tsx
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+  return <Layout user={user} />;
+}
+
+function Layout({ user }: { user: User | null }) {
+  return <Header user={user} />;
+}
+
+function Header({ user }: { user: User | null }) {
+  return <UserMenu user={user} />;
+}
+
+function UserMenu({ user }: { user: User | null }) {
+  return <div>{user?.name}</div>;
+}
+```
+
+`user`를 실제로 쓰는 곳은 `UserMenu` 하나인데, 중간에 끼어 있는 `Layout`과 `Header`까지 user prop을 알아야 한다. 이게 **props drilling**이다.
+
+문제는 단순히 코드가 길어지는 것에 그치지 않는다.
+
+- **중간 컴포넌트의 시그니처가 오염된다.** `Layout`은 user에 관심이 없는데도 user prop의 타입을 안다. 컴포넌트의 책임이 흐려진다.
+- **재사용이 어려워진다.** `Layout`을 다른 페이지에서 쓰려면 user를 어떻게 채울지부터 고민해야 한다.
+- **리팩토링 비용이 누적된다.** 깊은 자식에 새 데이터를 추가할 때마다 중간 모든 컴포넌트를 수정해야 한다.
+
+이 불편함을 해소하기 위해 React가 내장으로 제공하는 도구가 바로 **Context API**다.
+
+---
+
+## Context는 상태 관리 도구가 아니다
+
+React Context API에 대해 흔히 착각할 수 있는 요소 먼저 짚고 넘어가보자.
+
+> **"Context = 전역 상태 관리"** 가 아니다.
+> Context는 **데이터를 트리 깊이와 무관하게 전달하는 채널**일 뿐이다.
+
+이 차이가 구조적으로 어떻게 다른지 보면 이해가 쉽다.
+
+| | 역할 | 상태 보유 | 변경 메커니즘 |
+| --- | --- | --- | --- |
+| **Redux / Zustand** | 상태 관리 라이브러리 | ✅ 자체 store | dispatch / setState |
+| **Context API** | 전달 메커니즘 | ❌ 없음 | 외부에서 바뀐 값을 받아서 내려보낼 뿐 |
+
+Context는 자체적으로 상태를 가지지 않는다. 보통은 `useState`나 `useReducer`로 만든 상태를 Context의 `value`에 실어서 내려보낸다.
+즉 "Context로 상태 관리한다"는 표현은 정확히 말하면 **"useState + Context로 상태를 공유한다"** 는 뜻이다.
+
+이 구분이 중요한 이유는, 나중에 "왜 Context가 있는데도 Redux/Zustand 같은 도구가 또 등장했는가" 라는 질문에서 다시 필요하기 때문이다.
+
+---
+
+## Provider, Consumer, 그리고 useContext
+
+Context의 사용은 세 단계로 나뉜다.
+
+**1. Context 객체 생성**
+
+```tsx
+const UserContext = createContext<User | null>(null);
+```
+
+`createContext`는 Provider와 Consumer를 한 쌍으로 묶은 객체를 만든다. 이 객체 자체는 값을 저장하지 않는다.
+"이 채널을 통해 값이 흐른다"는 식별자 역할이다.
+
+여기서 넘기는 `null`은 흔히 "초기값"으로 오해되지만, 정확히는 **Provider 없이 useContext가 호출됐을 때 반환되는 fallback 값**이다. 이 구분은 뒤에서 한 번 더 짚는다.
+
+**2. Provider로 값을 주입**
+
+```tsx
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+
+  return (
+    <UserContext.Provider value={user}>
+      <Layout />
+    </UserContext.Provider>
+  );
+}
+```
+
+Provider는 `value` prop으로 받은 값을 자기 하위 트리 전체에 "전파"한다. 이제 `Layout`은 user prop을 받지 않는다.
+
+**3. useContext로 값을 구독**
+
+```tsx
+function UserMenu() {
+  const user = useContext(UserContext);
+  return <div>{user?.name}</div>;
+}
+```
+
+`useContext(UserContext)`는 트리를 위로 거슬러 올라가면서 가장 가까운 `UserContext.Provider`를 찾고, 그 Provider의 `value`를 반환한다.
+Provider가 없으면 `createContext`에 넘긴 fallback 값이 반환된다.
+
+여기까지가 "어떻게 쓰는가"의 영역이다. 이제 Context를 잘못 쓰면 문제가 생기는 지점으로 들어간다.
+
+---
+
+## value가 바뀌면 무슨 일이 일어나는가?
+
+가장 중요한 동작은 이거다.
+
+> **Provider의 `value`가 바뀌면, 그 Context를 구독하는 모든 컴포넌트가 리렌더링된다.**
+
+React가 정확히 어떻게 판단할까. Provider의 `value`를 이전 렌더의 value와 **`Object.is`로 비교**하고, 다르면 그 Context를 구독하는 모든 자식을 리렌더링 대상에 추가한다.
+
+여기서 [#025 React 렌더링 최적화](https://velog.io/@dh82680/React-렌더링-최적화-FE-개념-탐구-025)와 자연스럽게 이어진다. 그 글에서 "Context 값 변경은 memo로 막을 수 없다"고 짧게 언급했는데, 이유는 단순하다.
+
+```tsx
+const ChildBox = memo(function ChildBox() {
+  const user = useContext(UserContext); // ← 이 줄이 있는 한
+  return <div>{user?.name}</div>;
+});
+```
+
+`memo`는 부모가 리렌더링됐을 때 **props가 같으면** 자식 함수 실행을 건너뛰는 도구다.
+그런데 Context 구독자는 Provider value 변경 자체가 리렌더링 트리거다 — props 비교 경로와는 별개의 채널로 리렌더링이 발생한다.
+
+> ⚠️ **Context로 들어오는 값은 memo의 비교 대상에 들어있지 않다.**
+> "memo를 둘렀으니 안전하다"는 직관이 통하지 않는 영역이다.
+
+이게 Context를 쓸 때 가장 자주 발견하는 성능 함정의 출발점이다.
+
+---
+
+## 객체 value의 함정과 useMemo
+
+위 동작을 알고 나면 다음 코드가 왜 위험한지 보인다.
+
+```tsx
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+
+  return (
+    <UserContext.Provider value={{ user, setUser }}>
+      <Layout />
+    </UserContext.Provider>
+  );
+}
+```
+
+`{ user, setUser }`는 매 렌더마다 **새로 만들어지는 객체**다.
+user가 바뀌지 않아도, App이 어떤 이유로든 리렌더링되면 `value`는 새 참조가 된다.
+`Object.is(prevValue, newValue)`는 항상 `false`다. **그 결과 모든 구독자가 매번 리렌더링된다.**
+
+해결은 `useMemo`로 참조를 안정시키는 것이다.
+
+```tsx
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+
+  const value = useMemo(
+    () => ({ user, setUser }),
+    [user]
+  );
+
+  return (
+    <UserContext.Provider value={value}>
+      <Layout />
+    </UserContext.Provider>
+  );
+}
+```
+
+이제 `user`가 실제로 바뀔 때만 `value`가 새 객체가 되고, 그렇지 않은 리렌더에서는 같은 참조가 유지된다.
+
+> 💡 **value가 객체나 배열이라면 useMemo는 선택이 아니라 기본값에 가깝다.**
+> 단일 원시값(예: `value={user}`)이라면 user 자체가 변경 트리거이니 useMemo가 필요 없다.
+
+---
+
+## Context를 책임 단위로 쪼개기
+
+Provider 자체의 비용은 거의 없다. 단순한 메타데이터 전달이다.
+실제 비용은 **value가 바뀔 때 발생하는 리렌더링의 범위**에서 나온다.
+
+그래서 Context 설계의 핵심은 **"한 Context에 무엇을 묶을 것인가"** 가 된다.
+
+```tsx
+// ❌ 변경 빈도가 다른 값들을 한 Context에 묶음
+<AppContext.Provider value={{ user, theme, language, notifications }}>
+  <App />
+</AppContext.Provider>
+```
+
+`notifications`가 1초마다 갱신된다고 해보자. user나 theme은 거의 안 바뀌는데도, notifications가 들어있는 객체 value가 매초 새로 만들어지면서 user나 theme만 보는 컴포넌트까지 매초 리렌더링된다.
+
+올바른 분리는 이렇다.
+
+```tsx
+// ✅ 변경 빈도와 관심사 단위로 분리
+<UserContext.Provider value={user}>
+  <ThemeContext.Provider value={theme}>
+    <NotificationsContext.Provider value={notifications}>
+      <App />
+    </NotificationsContext.Provider>
+  </ThemeContext.Provider>
+</UserContext.Provider>
+```
+
+이제 notifications가 바뀌어도 user나 theme을 구독하는 컴포넌트는 영향받지 않는다.
+**한 Context는 한 가지 책임만 갖게 한다.** 이름만 봐도 무엇이 들어있는지 알 수 있어야 좋다.
+
+이 발상은 [#025](https://velog.io/@dh82680/React-렌더링-최적화-FE-개념-탐구-025)의 "도구보다 구조를 먼저"와 같은 결이다. memo/useMemo로 가리는 게 아니라 **처음부터 영향 범위가 좁은 구조로 만든다.**
+
+---
+
+## Provider 누락을 명시적으로 잡는 패턴
+
+앞서 짚은 부분 — Provider 없이 useContext를 호출하면 에러가 나는 게 아니라 fallback 값이 반환된다.
+
+```tsx
+const ThemeContext = createContext<'light' | 'dark'>('light');
+
+function Component() {
+  const theme = useContext(ThemeContext); // Provider 없으면 'light'
+  return <div className={theme}>...</div>;
+}
+```
+
+theme처럼 Provider 없이도 의미 있는 기본값이 있는 경우엔 이대로 두면 된다.
+하지만 **Provider 누락이 곧 버그인 경우** — 예를 들어 user 정보가 절대 없어선 안 되는 화면 — 에서는 무음 동작이 더 위험하다.
+
+이때 사용할 수 있는 패턴이 있다.
+
+```tsx
+const UserContext = createContext<User | null | undefined>(undefined);
+
+export function useUser() {
+  const user = useContext(UserContext);
+  if (user === undefined) {
+    throw new Error('useUser must be used within UserProvider');
+  }
+  return user;
+}
+```
+
+fallback을 `undefined`로 두고, 커스텀 훅에서 `undefined` 체크를 통해 명시적으로 에러를 던진다.
+그러면 Provider를 빠뜨린 컴포넌트는 즉시 터진다 — 무음으로 잘못된 동작을 하느니 빠르게 실패하는 게 디버깅이 쉽다.
+
+`null`을 기본값으로 쓰지 않고 `undefined`를 쓰는 이유는, `null`이 "값이 없음"이라는 정상적인 상태일 수 있기 때문이다 (예: 로그아웃 상태의 user). `undefined`는 "Provider 자체가 없는 비정상 상태"로 의미를 분리하는 것이다.
+
+---
+
+## Context의 자리 — 어디까지 쓰고 어디서부터 라이브러리인가
+
+마지막으로, Context와 외부 상태 관리 라이브러리(Zustand, Jotai, Redux 등)의 경계를 정리한다.
+
+핵심 차이는 **부분 구독(selector) 가능 여부**다.
+
+Context는 value 전체를 통째로 받는다. value가 객체이고 그 안의 한 필드만 바뀌어도, **그 객체를 받는 모든 구독자가 리렌더링된다.**
+
+```tsx
+const { user, theme, language } = useContext(AppContext);
+// theme만 쓰는 컴포넌트도 user나 language 변경에 반응한다.
+```
+
+Zustand는 다르다.
+
+```tsx
+const name = useStore(state => state.user.name);
+// user.name이 바뀔 때만 리렌더링된다. user.email이나 theme이 바뀌어도 영향 없음.
+```
+
+셀렉터로 "내가 관심 있는 부분"만 명시하고, 라이브러리가 자체 비교를 거쳐 그 부분이 바뀐 컴포넌트만 리렌더링한다.
+
+이 차이가 실무에서 갈리는 지점은 명확하다.
+
+| 상황 | 적합한 도구 |
+| --- | --- |
+| 거의 안 바뀌는 값 (theme, locale, user 정보) | **Context** |
+| props drilling 회피가 주 목적 | **Context** |
+| 값이 자주 바뀌고 구독자가 많음 | **외부 라이브러리** |
+| 부분 구독, 미들웨어, 시간 여행 디버깅 등이 필요 | **외부 라이브러리** |
+
+Context를 라이브러리의 대체재로 보면 자주 한계에 부딪힌다.
+**Context는 전달 채널이고, 라이브러리는 상태 관리 시스템**이다. 같은 일을 하는 도구가 아니다.
+
+---
+
+Context API는 처음 보면 "전역 변수"처럼 느껴지지만, 실제로 다뤄보면 **"리렌더링 전파의 단위를 어떻게 설계할 것인가"** 의 문제로 좁혀진다.
+
+- 어떤 값을 한 Context에 묶을지
+- value의 참조를 어떻게 안정화할지
+- Provider 누락을 어떻게 잡을지
+
+이것들이 Context를 잘 쓰는 것과 그렇지 않은 것의 판단 기준이다.

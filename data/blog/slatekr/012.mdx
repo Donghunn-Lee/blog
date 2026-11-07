@@ -1,0 +1,99 @@
+---
+title: "[SlateKR #012] 공시 분류 레이어 — 공시 태그"
+date: 2026-04-22
+lastmod: 2026-10-29
+summary: "원래는 홈 UI를 보완할 생각이었다.그러나 우선 종목 상세 페이지의 핵심 기능을 먼저 구현하고 기타 다양하네 추가해야 할 홈페이지를 작업하는 게 자연스럽다고 판단해서 바꿨다.현재 종목 상세 페이지에 DART 공시 목록을 붙여두긴 했는데, 제목 문자열만 나열된 상태였다."
+tags: ["frontend","SlateKR","typescript"]
+images: ["/static/images/velog/7de5fe15-bd04-4806-b7dd-9ed4babefa69-image.png"]
+draft: false
+---
+
+원래는 홈 UI를 보완할 생각이었다.
+그러나 우선 종목 상세 페이지의 핵심 기능을 먼저 구현하고 기타 다양하네 추가해야 할 홈페이지를 작업하는 게 자연스럽다고 판단해서 바꿨다.
+
+현재 종목 상세 페이지에 DART 공시 목록을 붙여두긴 했는데, 제목 문자열만 나열된 상태였다. `임원ㆍ주요주주특정증권등소유상황보고서`를 보고 어떤 내용인지 즉각 판단하는 사람은 많지 않다. 분류 태그를 붙이기로 했다.
+
+---
+
+## 분류 기준
+
+기준은 하나였다. **이 공시가 주가에 영향을 미칠 가능성이 있는가.**
+
+그 기준으로 다섯 가지를 골랐다. 주요사항보고서, 정기보고서(사업/분기/반기), 소유상황(대량보유·지분변동), 감사보고서, 주주총회. 나머지는 태그 없음이다.
+
+---
+
+## GENERAL fallback 제거
+
+초기 설계는 단순했다. 분류되지 않는 것들은 `GENERAL`로 fallback하는 방식.
+
+대표적인 것들 위주로 분류하고 나머지는 "일반" 태그를 달았는데, 실제로 붙여보니 IR 공고, 행정성 신고서, 주주총회 소집 공고 같은 것들에도 "일반" 배지가 달렸다.
+
+일반도 배지인데, 그 기준을 명확히 잡기가 어려울 것 같아서, 일반 분류에는 아예 태그를 달지 않기로 했다.
+
+`GENERAL`을 없애고 반환 타입을 `DisclosureType | null`로 바꿨다. 분류되지 않으면 태그를 달지 않는다.
+
+```ts
+export const classifyDisclosure = (title: string): DisclosureType | null => {
+  for (const { type, keywords } of PATTERNS) {
+    if (keywords.some((kw) => title.includes(kw))) return type;
+  }
+  return null;
+};
+```
+
+UI에서는 `{type && <CheckpointBadge type={type} />}` 한 줄로 끝난다.
+
+---
+
+## 키워드는 짧을수록 강하다
+
+OWNERSHIP 키워드를 처음엔 이렇게 잡았다.
+
+```ts
+keywords: ["대량보유상황보고", "임원ㆍ주요주주특정증권등소유상황보고"]
+```
+
+"최대주주등소유주식변동신고서"가 태그 없이 빠졌다. 키워드가 너무 긴 exact string이라 변형 제목에 매칭이 안 됐고, "소유주식변동" 계열 자체를 빠뜨렸다.
+
+```ts
+keywords: ["대량보유상황보고", "소유상황보고", "소유주식변동"]
+```
+
+핵심 substring으로 줄이면 변형에 강해진다. "소유상황보고"는 DART 체계에서 지분 관련 문서 외에 쓰이지 않아 false positive 걱정도 없다.
+
+---
+
+## 주주총회 키워드에서 뺀 것들
+
+처음엔 `"이사선임"`, `"감사선임"`도 포함했다. 그런데 이 두 공시는 주총 이후 등기 완료 신고 성격이다. 정작 중요한 이벤트인 주총 소집 공고와 결과 공시에는 이미 `"주주총회"` 키워드로 태그가 붙는다. 같은 사건이 연달아 두 번 태그되는 건 노이즈다. 제거했다.
+
+---
+
+## exhaustive check
+
+`CheckpointBadge`의 `BADGE_CONFIG`를 `Record<DisclosureType, ...>`로 정의했다.
+
+```ts
+const BADGE_CONFIG: Record<DisclosureType, { label: string; variant: BadgeVariant }> = {
+  MAJOR_EVENT:         { label: "주요사항",   variant: "red" },
+  FINANCIAL:           { label: "정기보고서", variant: "blue" },
+  // ...
+};
+```
+
+`DisclosureType`이 추가되면 `BADGE_CONFIG`에도 강제로 추가해야 한다. 컴파일 단계에서 누락을 잡아준다.
+
+---
+
+## 결과물 예시
+
+<img src="/static/images/velog/7de5fe15-bd04-4806-b7dd-9ed4babefa69-image.png" style={{width: '100%', maxWidth: '600px'}} />
+
+
+코드보다 분류 기준 설계에 시간이 더 걸렸다. GENERAL을 없앤 결정, 키워드를 substring으로 압축한 결정, 이사선임을 태그 없음으로 내린 결정 — 전부 "배지가 신호로서 가치를 가지려면 노이즈를 없애야 한다"는 원칙 하나에서 나왔다.
+
+## 다음 작업
+
+공시 ai 작업도 같이 진행하고 싶지만, 이건 mvp우선순위는 아니었으니 조금 미루려고 한다.
+그래서 다음은 홈 UI 보완이다. 지금은 로고와 검색창만 있는데, 빈 공간에 뭘 추가할지 레이아웃을 잡고, 최근 검색어 저장(`useRecentSearchStore`)과 관심종목 미리보기 섹션을 붙일 예정이다.

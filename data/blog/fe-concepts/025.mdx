@@ -1,0 +1,354 @@
+---
+title: "[React] 렌더링 최적화 — FE 개념 탐구 #025"
+date: 2026-04-27
+lastmod: 2026-10-22
+summary: "💡 핵심 요약React의 렌더링 최적화 도구(memo, useMemo, useCallback)는 모두 \"이전과 비교해서 같으면 재사용한다\"는 같은 메커니즘으로 동작한다. 비교 자체에 비용이 있다는 뜻이다.memo는 단독으로 거는 도구가 아니다. 부모에서 props 참"
+tags: ["Performance","React","frontend","memo","useCallback","useMemo","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- React의 렌더링 최적화 도구(`memo`, `useMemo`, `useCallback`)는 모두 "이전과 비교해서 같으면 재사용한다"는 같은 메커니즘으로 동작한다. 비교 자체에 비용이 있다는 뜻이다.
+- `memo`는 단독으로 거는 도구가 아니다. 부모에서 props 참조를 안정시키지 않으면 무력화되며, 그래서 `useMemo`/`useCallback`과 세트로만 의미가 있다.
+- 가장 빠른 최적화는 도구를 거는 것이 아니라 **state 위치를 잘 잡아서 리렌더링이 일어나지 않는 구조로 짜는 것**이다. 도구는 측정 후 병목이 식별된 곳에만 선별 적용한다.
+
+---
+
+## 목차
+
+> 1. [일단 최적화 도구를 두르자?](#일단-최적화-도구를-두르자?)
+> 2. [세 도구는 같은 메커니즘으로 동작한다](#세-도구는-같은-메커니즘으로-동작한다)
+> 3. [memo가 왜 자주 효과가 없는가](#memo가-왜-자주-효과가-없는가)
+> 4. [useMemo는 캐싱이 아니다](#usememo는-캐싱이-아니다)
+> 5. [useCallback이 정당한 단 두 가지 경우](#usecallback이-정당한-단-두-가지-경우)
+> 6. [도구로 막을 수 없는 리렌더링](#도구로-막을-수-없는-리렌더링)
+> 7. [도구보다 구조를 먼저](#도구보다-구조를-먼저)
+> 8. [언제 적용할지 — 측정 기반 의사결정](#언제-적용할지--측정-기반-의사결정)
+
+---
+
+## 일단 최적화 도구를 두르자?
+
+React 개발이 조금 익숙해지면, 슬슬 최적화를 시도하는 경우가 많다. 메모이제이션을 배우고, 좋은 거라니 일단 적용해본다.
+
+```jsx
+const handleClick = useCallback(() => {
+  setCount(c => c + 1);
+}, []);
+
+const value = useMemo(() => count * 2, [count]);
+
+const Child = memo(ChildComponent);
+```
+
+"성능 최적화"라는 이름으로 거의 모든 함수에 `useCallback`을, 모든 값에 `useMemo`를, 모든 컴포넌트에 `memo`를 두르는 코드. 그런데 이 코드가 정말 더 빠를까?
+
+답은 **대부분의 경우 그렇지 않다**. 오히려 느려질 수도 있다.
+
+[#021 React 렌더링 과정](https://velog.io/@dh82680/React%EC%9D%98-%EB%A0%8C%EB%8D%94%EB%A7%81%EC%9D%B4%EB%9E%80-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-021)에서 다룬 것처럼, React에서 "리렌더링"은 화면이 다시 그려지는 것이 아니라 **컴포넌트 함수가 다시 실행되는 것**이다. 그리고 이 함수 실행은 대부분의 경우 충분히 빠르다. 진짜 병목은 특정 무거운 컴포넌트(큰 리스트, 복잡한 계산)에 집중되어 있고, 나머지는 측정해보면 미미하다.
+
+이 글의 출발점은 이거다.  
+**"메모이제이션 = 빠르다"라는 직관은 절반만 맞다.** 메모이제이션은 "이전 결과 재사용으로 비싼 계산을 피하는 기법"인데, 컴포넌트 재실행 자체가 싼 작업이면 메모이제이션의 이득이 비교 비용보다 작아진다.
+
+---
+
+## 세 도구는 같은 메커니즘으로 동작한다
+
+React가 제공하는 렌더링 최적화 도구는 셋이다.
+
+| 도구 | 메모이제이션 대상 | 최적화 목표 |
+|------|------------------------|-------------------|
+| `React.memo` | **컴포넌트** | 부모 리렌더링 시 자식이 같이 재실행되는 것을 막음 |
+| `useMemo` | **값(계산 결과)** | 매 렌더마다 비싼 계산이 다시 일어나는 것을 막음 |
+| `useCallback` | **함수 참조** | 매 렌더마다 함수가 새로 만들어져 자식 props 참조가 깨지는 것을 막음 |
+
+이름과 용도는 달라 보이지만, 셋 다 동일한 원리로 동작한다.
+
+> **이전과 비교해서, 같으면 이전 결과를 재사용한다.**
+
+비교 대상이 다를 뿐이다. memo는 props를, useMemo와 useCallback은 의존성 배열을 비교한다. 그리고 모든 비교는 **얕은 비교(shallow comparison)** — `Object.is`로 각 항목을 하나씩 본다.
+
+이 한 줄에서 두 가지가 따라온다.
+
+**첫째, 비교 자체에 비용이 든다.**  
+props가 많거나 의존성 배열이 길면 비교가 누적된다. 컴포넌트 본문이 가벼울수록 비교 비용이 상대적으로 커진다.
+
+**둘째, 객체나 함수 props는 참조가 매 렌더마다 새로 만들어진다.**  
+[#021](https://velog.io/@dh82680/React%EC%9D%98-%EB%A0%8C%EB%8D%94%EB%A7%81%EC%9D%B4%EB%9E%80-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-021)에서 본 대로, 함수 컴포넌트가 다시 실행될 때 안의 변수, 함수, 객체 리터럴이 전부 새로 만들어지기 때문이다. 얕은 비교는 참조만 보니까 항상 다르다고 판단한다.
+
+이 두 사실을 잡고 하나씩 들어간다.
+
+---
+
+## memo가 왜 자주 효과가 없는가
+
+`memo`는 컴포넌트를 감싸서 부모 리렌더링이 자식으로 전파되는 것을 막아주는 도구다.
+
+```jsx
+const Child = memo(function Child({ name, age }) {
+  return <div>{name} {age}</div>;
+});
+```
+
+`Child`는 부모가 리렌더링되더라도 props가 같으면 함수 실행을 건너뛰고 이전 Element를 재사용한다.
+
+문제는 "props가 같다"가 생각보다 까다롭다는 점이다.
+
+```jsx
+function Parent() {
+  return (
+    <Child
+      options={{ size: 'large' }}      // 매 렌더마다 새 객체
+      onClick={() => console.log()}    // 매 렌더마다 새 함수
+    />
+  );
+}
+```
+
+memo가 분명히 걸려있는데도 자식이 매번 리렌더링된다. 부모가 렌더링될 때마다 `options` 객체와 `onClick` 함수가 새로 만들어지고, 얕은 비교는 참조만 보니까 항상 다르다고 판단하기 때문이다.
+
+이 문제를 풀려면 부모에서 참조를 안정시켜야 한다.
+
+```jsx
+function Parent() {
+  const options = useMemo(() => ({ size: 'large' }), []);
+  const handleClick = useCallback(() => console.log(), []);
+  return <Child options={options} onClick={handleClick} />;
+}
+```
+
+> ⚠️ **memo는 단독으로 쓰는 도구가 아니다.**  
+> 부모에서 props 참조가 안정적이어야 효과가 있다. 자식 하나에 memo를 걸려면 그 자식에 props를 넘기는 부모 코드를 같이 손봐야 한다는 뜻이다.
+
+이게 memo를 **"일단 두르면 좋다"** 가 아닌 이유다. memo 하나를 의미 있게 만들려면 부모에서 useMemo, useCallback을 줄줄이 따라 쓰게 되고, 코드 복잡도와 의존성 배열 관리 부담이 같이 올라간다.
+
+---
+
+## useMemo는 캐싱이 아니다
+
+`useMemo`는 의존성 배열의 값들을 이전과 비교해서, 같으면 콜백을 실행하지 않고 이전 결과를 그대로 반환한다.
+
+```jsx
+const filteredList = useMemo(() => {
+  return hugeList.filter(item => item.active).sort(...);
+}, [hugeList]);
+```
+
+여기서 흔한 오해를 하나 짚는다.
+
+> **useMemo는 캐싱이 아니다.**
+
+캐싱이라는 단어는 "한 번 계산한 결과를 영구히 보관해뒀다가 재사용한다"는 뉘앙스를 준다. 하지만 useMemo는 그렇지 않다.
+
+- 의존성이 바뀌면 무조건 다시 계산한다
+- React 공식 문서는 useMemo의 결과가 **메모리 압박 시 버려질 수 있다**고 명시한다 — 즉, 의존성이 같아도 React가 캐시를 버리고 다시 계산하기로 결정할 수 있다
+
+useMemo의 정확한 의미는 **"이전 렌더에서 계산한 값이 남아있고 의존성이 같다면 재사용하는 best-effort 메커니즘"** 이다. 그래서 useMemo의 결과를 "절대적인 동일 참조 보장"으로 의존하는 코드는 위험하다.
+
+useMemo가 의미 있는 두 가지 경우는 명확하다.
+
+1. **계산 자체가 비싼 경우** — 큰 배열의 정렬/필터링, 복잡한 변환
+2. **결과 객체의 참조 안정성이 필요한 경우** — memo된 자식의 props로 넘어가거나, 다른 Hook의 deps로 쓰일 때
+
+반대로 단순한 사칙연산이나 짧은 배열 처리에 useMemo를 거는 건 비교 비용이 계산 비용보다 더 든다.
+
+---
+
+## useCallback이 정당한 단 두 가지 경우
+
+`useCallback`은 사실상 `useMemo(() => fn, deps)`의 축약 표현이다. 함수를 메모이제이션해서 의존성이 같으면 같은 함수 참조를 반환한다.
+
+useCallback이 의미 있는 경우는 거의 두 가지로 정리된다.
+
+**경우 1 — memo된 자식의 props로 들어갈 때**
+
+```jsx
+const handleClick = useCallback(() => { /* ... */ }, []);
+return <MemoChild onClick={handleClick} />;
+```
+
+`MemoChild`가 memo로 감싸져 있을 때, useCallback이 없으면 매 렌더마다 새 함수가 만들어져 memo가 무력화된다. 앞서 본 바로 그 시나리오다.
+
+**경우 2 — 다른 Hook의 의존성 배열로 들어갈 때**
+
+```jsx
+function SearchBox({ query }) {
+  const fetchResults = useCallback(async () => {
+    const res = await fetch(`/api/search?q=${query}`);
+    return res.json();
+  }, [query]);
+
+  useEffect(() => {
+    fetchResults().then(setResults);
+  }, [fetchResults]); // 함수가 deps에 들어감
+}
+```
+
+useCallback으로 감싸지 않았다면, 부모가 리렌더링될 때마다 `fetchResults`가 새 함수 객체로 만들어진다. useEffect는 deps가 바뀐 것으로 판단해 effect를 매번 재실행한다 — 불필요한 API 호출 또는 무한 루프로 직결된다.
+
+useCallback으로 감싸면 `query`가 바뀐 시점에만 새 함수가 만들어지고, useEffect도 그때만 재실행된다.
+
+**의미 없는 경우**
+
+```jsx
+const handleClick = useCallback(() => { /* ... */ }, []);
+return <button onClick={handleClick}>Click</button>; // ❌ 효과 없음
+```
+
+DOM 요소의 onClick은 useCallback으로 감싸도 아무 효과가 없다. button 요소는 memo의 비교 대상이 아니고, React는 함수 참조가 바뀌어도 같은 DOM 요소에 새 핸들러를 등록하기만 하기 때문이다.
+
+> **이 두 경우(memo된 자식 / 다른 Hook의 deps)에 해당하지 않는데 useCallback을 걸고 있다면, 거의 확실히 의미 없는 비교 비용을 추가하고 있는 것이다.**
+
+---
+
+## 도구로 막을 수 없는 리렌더링
+
+memo, useMemo, useCallback이 만능이 아니다. 이 도구들로 **해결되지 않는** 리렌더링 패턴이 몇 가지 있다.
+
+**① Context 값 변경**
+
+```jsx
+const ExpensiveTree = memo(() => {
+  const theme = useContext(ThemeContext);
+  return <div>{theme}</div>;
+});
+```
+
+`ExpensiveTree`에 memo가 걸려있어도, `theme`이 바뀌면 무조건 리렌더링된다. memo는 props만 비교하는데, Context 값은 props가 아니라 `useContext`로 직접 구독하는 값이기 때문이다. 다음 글 [#026 Context API]에서 자세히 다룰 주제다.
+
+**② children prop**
+
+```jsx
+<MemoBox>
+  <Header />
+  <Content />
+</MemoBox>
+```
+
+JSX는 매 렌더마다 새 Element 객체로 평가된다. children도 결국 props고 참조가 매번 달라지므로, memo의 얕은 비교에서 항상 "다르다"고 판단된다.
+
+**③ 자기 자신의 state 변경**
+
+memo는 부모→자식 흐름만 다룬다. 자기 자신의 state가 바뀌면 무조건 리렌더링된다 — 그리고 이건 막아서도 안 된다. state가 바뀌었으니 화면이 바뀌어야 하는 게 정상이다.
+
+이 중 ②번은 도구가 아니라 **구조**로 풀어야 하는 문제다. 다음 섹션이 그 얘기다.
+
+---
+
+## 도구보다 구조를 먼저
+
+다음 코드를 보자.
+
+```jsx
+function App() {
+  const [count, setCount] = useState(0);
+  return (
+    <div>
+      <button onClick={() => setCount(c => c + 1)}>{count}</button>
+      <ExpensiveBox>
+        <Header />
+        <Content />
+      </ExpensiveBox>
+    </div>
+  );
+}
+
+const ExpensiveBox = memo(({ children }) => {
+  console.log('ExpensiveBox rendered'); // 버튼 누를 때마다 찍힘
+  return <div className="box">{children}</div>;
+});
+```
+
+`App`이 `count` 때문에 리렌더링될 때마다 `<Header />`와 `<Content />` JSX가 새 Element로 평가되고, 그 결과 children 참조가 매번 바뀐다. memo는 무력화된다.
+
+이걸 useMemo로 감싸 풀 수도 있지만 어색하다.  
+훨씬 자연스러운 해법은 **state 위치를 옮기고 합성으로 푸는 것**이다.
+
+```jsx
+function App() {
+  return (
+    <Counter>
+      <ExpensiveBox>
+        <Header />
+        <Content />
+      </ExpensiveBox>
+    </Counter>
+  );
+}
+
+function Counter({ children }) {
+  const [count, setCount] = useState(0);
+  return (
+    <div>
+      <button onClick={() => setCount(c => c + 1)}>{count}</button>
+      {children}
+    </div>
+  );
+}
+```
+
+이제 `Counter`의 `count`가 바뀌면 `Counter`만 리렌더링된다. `Counter`에 들어오는 `children`은 `App`이 만들어준 것이고, `App`은 리렌더링되지 않았으니 children Element 참조는 그대로 유지된다.
+
+`Counter` 함수 본문에서 `{children}`을 다시 사용해도, 이건 이미 만들어진 Element 참조를 꺼내 쓸 뿐이지 새로 만드는 게 아니다. 그래서 `ExpensiveBox`로 전달되는 children 참조가 안정적이고, memo도 필요 없다.
+
+> **state는 그것이 영향을 주는 컴포넌트만큼 좁은 범위에 두고, 영향받지 않는 트리는 children으로 위에서 내려보낸다.**
+
+이 패턴은 레이아웃 컴포넌트에서 자주 보인다.
+
+```jsx
+function Layout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  return (
+    <div>
+      <Sidebar open={sidebarOpen} onToggle={...} />
+      <main>{children}</main>
+    </div>
+  );
+}
+
+function Page() {
+  return (
+    <Layout>
+      <ExpensivePageContent />
+    </Layout>
+  );
+}
+```
+
+`Layout`의 `sidebarOpen`이 바뀌어도 `ExpensivePageContent`는 리렌더링되지 않는다. `Page`는 리렌더링된 게 아니니까 children 참조가 그대로다.
+
+> 💡 최적화의 시작은 도구가 아니라 구조다.  
+> "최적화 도구로 막는다"가 아니라 **"처음부터 리렌더링이 일어나지 않는 구조로 짠다"** 는 발상의 차이다.
+
+---
+
+## 최적화 판단 — 측정 기반 의사결정
+
+지금까지의 내용을 정리하면 올바른 적용 순서는 이렇게 된다.
+
+```
+1. 측정         — React DevTools Profiler로 실제 렌더링 시간 확인
+2. 병목 식별    — 명확히 느린 컴포넌트가 있는가?
+3. 구조 점검    — state 위치를 옮기거나 합성으로 풀 수 있는가?
+4. 도구 적용    — 그래도 필요하면 memo + useMemo/useCallback 세트로
+5. 재측정       — 실제로 개선되었는지 확인
+```
+
+선험적으로 적용을 고려할 만한 케이스는 명확하다.
+
+- **무거운 계산이 있는 곳** → useMemo
+- **memo된 컴포넌트에 객체/함수 props를 넘길 때** → useMemo / useCallback (세트로)
+- **비싼 렌더링 비용을 갖는 큰 리스트의 항목** → memo
+- **다른 Hook의 deps에 함수가 들어가는 경우** → useCallback
+
+그 외 대부분의 경우, React는 **그냥 다시 실행하는 게 비교보다 빠르다.**
+
+---
+
+이번 내용을 이해하면 최적화 필요성을 판단하는 시야가 생길 것으로 기대한다.
+
+- "memo가 효과 있는 곳"과 "겉보기엔 걸려있지만 무력화된 곳"이 구분된다
+- useCallback을 거는 동기가 "혹시 모르니까"가 아니라 "memo된 자식 / Hook deps에 들어가니까"로 분명해진다
+- 가장 빠른 최적화는 도구를 거는 게 아니라 **state 위치를 잘 잡는 것**임을 알게 된다
+
+React의 최적화가 무엇인지, 언제 어떻게 사용해야 하는지에 대한 개념을 명확하게 잡으면 불필요한 작업 없이 오직 필요에 따라 최적화 작업을 진행할 수 있을 것이다.

@@ -1,0 +1,131 @@
+---
+title: "[SlateKR #001] 프로젝트 초기 세팅 — 기술 스택과 폴더 구조 결정"
+date: 2026-04-06
+lastmod: 2026-11-04
+summary: "프로젝트 기획이 끝나고 본격적으로 개발을 시작하기 전, 가장 먼저 한 일은 기술 스택과 폴더 구조를 정하는 것이었다. \"어차피 나중에 바꿀 수도 있는데 왜 미리 고민하냐\"고 물을 수도 있지만, 조회형 서비스는 검색 → 상세 → 저장이라는 명확한 흐름이 있고, 서버 중심"
+tags: ["architecture","next.js","SlateKR"]
+draft: false
+---
+
+프로젝트 기획이 끝나고 본격적으로 개발을 시작하기 전, 가장 먼저 한 일은 기술 스택과 폴더 구조를 정하는 것이었다. 
+
+"어차피 나중에 바꿀 수도 있는데 왜 미리 고민하냐"고 물을 수도 있지만, 조회형 서비스는 검색 → 상세 → 저장이라는 명확한 흐름이 있고, 서버 중심 데이터 조회와 클라이언트 UI 상태가 섞이는 구조다. 
+
+처음부터 이 경계를 흐리면 나중에 "이 상태는 어디서 관리해야 하지?"라는 혼란이 생긴다는 것은 `Aim Test` 개발하며 실감했기에, 핵심 경계만큼은 초기에 명확히 하고 시작하기로 했다.
+
+## Next.js 15 App Router를 선택한 이유
+
+React 18의 Server Components를 제대로 활용하려면 Next.js App Router가 가장 안정적인 선택지였다. 
+
+SlateKR은 조회형 서비스다. 종목 상세 페이지는 SEO가 필요하고, 데이터는 서버에서 미리 가져와야 한다. Pages Router로도 가능하지만, Server Components를 쓰면 클라이언트 번들 크기를 줄이면서도 서버 데이터를 자연스럽게 스트리밍할 수 있다.
+
+또한 `generateMetadata`로 동적 메타데이터를 생성하고, 섹션별로 `loading.tsx`와 `error.tsx`를 분리해서 독립적인 fallback을 구현하기에도 App Router가 적합했다.
+
+## Tailwind CSS v4 + shadcn/ui
+
+기획 단계에서 "카드/블럭 형태의 심플하고 약간 귀엽고 깔끔한 느낌"을 지향하기로 했다. shadcn/ui는 Radix 기반의 headless 컴포넌트를 제공하면서도, 프로젝트에 맞게 커스터마이징하기 쉽다는 게 장점이었다.
+
+처음엔 프로젝트와 어울리는 `slate` baseColor를 쓰고 싶었는데, 최신 버전에서는 `slate`가 제거되어 있었다. 대신 `neutral`을 선택했고, 스타일은 `radix-vega`로 설정했다.
+
+Tailwind v4는 v3와 거의 동일하게 쓸 수 있으면서도 성능 개선이 있었고, shadcn/ui와 조합했을 때 별도 설정 없이 바로 동작한다기에 채택했다.
+
+## features / entities / shared / lib 폴더 구조
+
+프로젝트 구조를 설계할 때 가장 고민한 건 "어떤 기준으로 파일을 나눌 것인가"였다.
+
+```
+src/
+├── app/                  # 라우트, 레이아웃, loading/error
+├── components/
+│   └── ui/              # shadcn primitive
+├── features/            # 검색, 관심종목 등 사용자 액션 중심
+├── entities/            # stock, disclosure 등 도메인 표시 단위
+├── shared/              # 상수, 공용 타입, 유틸
+└── lib/                 # 외부 API 호출, adapter, normalizer
+```
+
+### 왜 이렇게 나눴는가
+
+**features**: 사용자 액션 중심. 검색 자동완성, 관심종목 저장처럼 "사용자가 무언가를 한다"는 기능 단위로 묶었다.
+
+**entities**: 도메인 표시 단위. `StockCard`, `DisclosureItem`처럼 "종목", "공시"라는 개념을 UI로 표현하는 컴포넌트들이 들어간다.
+
+**shared**: 여러 곳에서 쓰이는 상수, 타입, 유틸. `formatPrice`, `formatDate` 같은 순수 함수들.
+
+**lib**: 외부 API 호출과 정규화. DART API 응답을 내부 도메인 모델로 변환하는 adapter가 여기 들어간다.
+
+이 구조의 핵심은 **"외부 API 타입이 UI 컴포넌트에 직접 들어가지 않게 하는 것"**이다. `lib/`에서 정규화한 모델을 `entities/`가 받고, `features/`가 조합하는 흐름이다.
+
+## SUIT Variable 폰트 적용 — CDN에서 로컬로
+
+SUIT를 선택한 이유는 특별하지 않다. 모던한 폰트를 찾았지만 Pretendard는 너무 많이 쓰기도 했고 익숙해서, 비슷하면서도 다른 폰트를 찾아 결정했다. 물론 폰트 정도는 나중에 바꿀지도 모른다.
+
+먼저 처음엔 Google Fonts CDN으로 SUIT Variable을 불러오려 했다. 하지만 빌드 단계에서 PostCSS 오류가 계속 발생했다.
+
+```
+Error: Cannot find module '@csstools/postcss-oklab-function'
+```
+
+`@csstools/postcss-oklab-function`을 설치해도 해결되지 않았고, CDN 폰트 import와 PostCSS 플러그인 간 충돌로 보였다.
+
+결국 SUIT Variable woff2 파일을 직접 다운로드해서 `public/fonts/`에 넣고, `next/font/local`로 불러오는 방식으로 전환했다.
+
+```ts
+// src/app/layout.tsx
+import localFont from 'next/font/local';
+
+const suitVariable = localFont({
+  src: '../../public/fonts/SUIT-Variable.woff2',
+  variable: '--font-suit',
+  display: 'swap',
+});
+```
+
+이렇게 하니 오류 없이 정상 적용됐고, Network 탭에서도 폰트가 제대로 로드되는 걸 확인했다.
+
+교훈: CDN이 항상 답은 아니다. 특히 빌드 도구와 충돌 가능성이 있을 땐 로컬 파일이 더 안정적일 수 있다.
+
+## 서버 상태 vs 클라이언트 상태 — 경계 먼저 정하기
+
+SlateKR은 조회 중심 서비스다. 종목 데이터, 재무 정보, 공시 목록은 모두 서버에서 가져온다. 하지만 검색 입력, 관심종목 저장, 다크모드 같은 UI 상태는 클라이언트에서 관리해야 한다.
+
+이 경계를 초기에 명확히 하지 않으면, 나중에 "이 데이터는 서버에서 받아야 하나? 클라이언트에서 관리해야 하나?"라는 혼란이 생긴다.
+
+### 서버 상태
+- 종목 기본 정보
+- 재무 데이터
+- 공시 목록
+- 차트 데이터
+
+→ **Server Components + fetch + revalidate** 기본  
+→ **TanStack Query**는 클라이언트 상호작용 필요한 일부만 (예: 검색 자동완성)
+
+### 클라이언트 상태
+- 검색 입력값
+- 관심종목 (localStorage persist)
+- 최근 검색어
+- 다크모드
+- 차트 기간 선택
+
+→ **Zustand** (persist 플러그인)
+
+TanStack Query Provider는 설정했지만, 실제로 어디에 쓸지는 아직 구체적이지 않다. 다만 "서버 데이터 캐싱이 필요한 클라이언트 상호작용"이 생기면 쓰겠다는 의도로 미리 세팅만 해뒀다.
+
+## 초기 세팅 완료 후 상태
+
+현재까지 완료된 것:
+- Next.js 15 프로젝트 생성
+- shadcn/ui 초기화
+- Zustand, TanStack Query, Zod, date-fns, lightweight-charts 설치
+- 폴더 구조 생성
+- SUIT Variable 폰트 로컬 적용
+- next-themes ThemeProvider 설정 (기본 다크모드)
+- ESLint + Prettier 설정
+
+아직 하지 않은 것:
+- 실제 데이터 소스 확정
+- DB 스키마 설계
+- 도메인 모델 정의
+- API adapter 구현
+
+다음 단계는 **"국내 주식 데이터를 어디서, 어떻게 가져올 것인가"**를 결정하는 것이다. DART API와 pykrx를 검증하고, 실제로 어떤 데이터를 어떻게 조합할지 스키마를 구체화하는 과정을 다음 글에서 다루려 한다.

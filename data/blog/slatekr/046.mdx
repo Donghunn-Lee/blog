@@ -1,0 +1,209 @@
+---
+title: "[SlateKR #046] nested layout 본 적용과 탭별 metadata 정리"
+date: 2026-06-01
+lastmod: 2026-10-31
+summary: "Before / After.@tab/ 폴더가 사라지고 내부 내용이 한 단계 위로 올라온다. default.tsx 두 개도 함께 제거. layout이 받던 slot prop도 일반 children으로 돌아왔다.내부 import는 모두 @/ 절대 경로였어서 깊이 변경에 따"
+tags: ["Metadata","app router","nested layout","next.js","refactor","SlateKR"]
+draft: false
+---
+
+#045에서 결정한 폴더 재배치를 이번 세션에 적용했다. 코드 변경량으로 보면 폴더 정리 + 한 줄짜리 분기 + 각 page에 metadata 함수 추가 정도라 부피는 작지만, 라우팅 구조가 한 단계 단순해진 시점이라 짚어둘 만하다.
+
+#045에서 미리 정리해둔 대로 커밋 세 개로 나눠 진행했다. 폴더 재배치 → cache 위치 이동 → metadata + prefetch + 활성 분기.
+
+---
+
+## 1. 폴더 재배치 — `@tab` 슬롯 해체
+
+Before / After.
+
+```
+Before
+[ticker]/
+├── @tab/
+│   ├── default.tsx
+│   ├── error.tsx
+│   ├── loading.tsx
+│   ├── page.tsx              ← 종합정보
+│   ├── chart/{page,loading,error}.tsx
+│   ├── disclosures/{page,loading,error}.tsx
+│   └── financials/{page,loading,error}.tsx
+├── default.tsx
+├── layout.tsx
+└── page.tsx                  ← 빈 페이지
+
+After
+[ticker]/
+├── layout.tsx                ← children prop
+├── page.tsx                  ← 종합정보 본체
+├── error.tsx
+├── loading.tsx
+├── chart/{page,loading,error}.tsx
+├── disclosures/{page,loading,error}.tsx
+└── financials/{page,loading,error}.tsx
+```
+
+`@tab/` 폴더가 사라지고 내부 내용이 한 단계 위로 올라온다. `default.tsx` 두 개도 함께 제거. layout이 받던 slot prop도 일반 `children`으로 돌아왔다.
+
+```tsx
+// Before
+export default async function Layout({
+  children,
+  tab,
+  params,
+}: {
+  children: React.ReactNode;
+  tab: React.ReactNode;   // 실제 콘텐츠가 들어오던 슬롯
+  params: Promise<{ ticker: string }>;
+}) {
+  // ...
+  return <main>{/* 고정 영역 */}<div>{tab}</div></main>;
+}
+
+// After
+export default async function Layout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ ticker: string }>;
+}) {
+  // ...
+  return <main>{/* 고정 영역 */}<div>{children}</div></main>;
+}
+```
+
+내부 import는 모두 `@/` 절대 경로였어서 깊이 변경에 따른 조정은 없었다. 한 가지 부수 효과로 `/stocks/[ticker]` URL 자체가 종합정보 페이지가 됐다. #042 구조에선 `@tab/page.tsx`가 슬롯 루트로 렌더돼서 같은 URL이 종합정보를 가리키긴 했지만, 슬롯 매핑 한 단계가 끼어 있었다. 이제는 라우트 매핑이 1:1이다.
+
+빌드 출력에서 네 경로(`/stocks/[ticker]`, `/stocks/[ticker]/chart`, `/stocks/[ticker]/financials`, `/stocks/[ticker]/disclosures`) 모두 dynamic(ƒ)로 잡히는 걸 확인하고 다음 커밋으로 넘어갔다.
+
+---
+
+## 2. cache 래핑을 lib로 이동
+
+기존엔 layout 안에서 로컬로 `React.cache`를 감싸 쓰고 있었다.
+
+```tsx
+// app/stocks/[ticker]/layout.tsx — Before
+import { cache } from "react";
+import { getStockByTicker } from "@/lib/stocks";
+
+const getStock = cache(getStockByTicker);
+// ...
+const stock = await getStock(ticker);
+```
+
+layout 한 곳에서만 쓰는 동안엔 문제없었는데, 다음 수정 계획에서 각 탭 page의 `generateMetadata`에서도 같은 함수를 호출하게 된다. `generateMetadata`는 layout 렌더와 별도 호출이라 layout 내부 cache로는 dedupe되지 않는다.
+
+cache 래핑 자체를 `lib/stocks.ts`로 끌어올렸다.
+
+```ts
+// lib/stocks.ts — After
+export const getStockByTicker = cache(
+  async (ticker: string): Promise<StockSummary | null> => {
+    // ...
+  }
+);
+```
+
+layout에선 로컬 cache 정의를 지우고 lib export를 그대로 호출한다. 호출 지점을 grep해보니 layout 한 곳뿐이라 영향 범위는 좁았다. 다음 커밋에서 metadata 함수들이 추가되면 그 호출들도 자동으로 같은 cache 사이클을 공유한다.
+
+cache 래핑 위치를 lib export 자체로 옮기는 게 좋다고 본 이유는 단순했다. 호출 지점에서 캐시 여부를 의식할 필요가 없는 게 일관성 면에서 자연스럽다. 캐시 안 된 원본을 따로 호출할 시나리오가 없다면, 두 가지 버전을 export하는 게 오히려 노이즈다.
+
+---
+
+## 3. metadata · prefetch · 활성 분기
+
+### 탭별 generateMetadata 추가
+
+#045에서 짚어둔 대로 각 탭 page에 `generateMetadata`를 따로 두기로 했다. 기존 Parallel Routes 구조에선 슬롯이 한 layout 안에 묶여 있어 metadata도 layout 한 곳에서밖에 관리가 안 됐다. nested 구조에서는 페이지마다 별도로 둘 수 있어 브라우저 탭 title이 탭별로 다르게 잡힌다.
+
+```ts
+// chart/page.tsx
+export const generateMetadata = async ({ params }: PageProps): Promise<Metadata> => {
+  const { ticker } = await params;
+  const stock = await getStockByTicker(ticker);
+  if (!stock) return { title: "종목을 찾을 수 없습니다 | SlateKR" };
+  return {
+    title: `${stock.name}(${stock.ticker}) 차트 | SlateKR`,
+    description: `${stock.name}의 일별 주가 차트와 거래 추이를 확인하세요.`,
+  };
+};
+```
+
+탭 네 개 모두 같은 패턴. 종합/차트/재무/공시 각각 본문 description만 다르게 잡았다. `getStockByTicker`가 lib 쪽에서 cache로 감싸져 있으니 layout 호출과 같은 요청 안에서 dedupe된다.
+
+| 탭 | title (삼성전자 예시) |
+|---|---|
+| 종합정보 | `삼성전자(005930) 종목 정보 | SlateKR` |
+| 차트 | `삼성전자(005930) 차트 | SlateKR` |
+| 재무 | `삼성전자(005930) 재무 정보 | SlateKR` |
+| 공시 | `삼성전자(005930) 공시 | SlateKR` |
+
+### 탭 nav 활성 분기 명시화
+
+URL 구조가 바뀐 만큼 `StockTabNav`의 활성 상태 판단도 다시 봐야 했다. 종합정보 href(`/stocks/${ticker}`)는 다른 탭 URL의 prefix가 돼서 `startsWith` 한 줄로 통일하면 종합정보가 항상 활성으로 잡힌다.
+
+```ts
+// Before — 모든 탭 완전 일치
+const isActive = pathname === tab.href;
+
+// After — 종합만 완전 일치, 나머지는 prefix
+const isActive =
+  tab.href === `/stocks/${ticker}`
+    ? pathname === tab.href
+    : pathname.startsWith(tab.href);
+```
+
+쿼리스트링은 `pathname`이 경로만 반환하므로 `?preset=3Y&q=배당` 같은 URL에서도 active 분기는 정상 동작한다.
+
+### prefetch=\{false\} 제거
+
+`StockTabNav`의 `<Link>`에 `prefetch={false}`가 박혀 있었다. 처음엔 트래픽 효율 명목으로 뒀던 건데, 탭 전환 시 클릭 후 fetch 시작이라 스켈레톤이 잠깐 깜빡이는 원인이었다. Next.js 공식 문서를 다시 보니 dynamic route는 prefetch=auto 상태에서 loading.tsx 경계까지만 prefetch되어 부담이 크지 않다. 속성만 제거.
+
+---
+
+## prefetch 효과를 측정
+
+prefetch 활성화 직후, 실제로 로딩 속도 차이가 체감이 될까 하는 궁금증에 활성화 전후를 DevTools Network로 측정해봤다.
+
+종목 상세 페이지에서 새로고침 후, 차트 탭에 hover한 뒤 클릭해서 이동하는 케이스를 두 번 측정했다.
+
+| 구간 | prefetch=false | prefetch=true |
+|---|---|---|
+| Waiting for server response | 262.41ms | 48.03ms |
+| Content Download | 489.43ms | 505.07ms |
+| Total | 755.19ms | 554.50ms |
+
+Waiting 시간이 262 → 48ms로 줄어든 건 prefetch가 실제 작동했다는 증거다. hover 시점에 서버가 RSC 페이로드 생성을 미리 끝내놨고 클릭 시점엔 받기만 하면 된 거다.
+
+근데 좀 애매했다. 우선 이게 `npm run dev` 상태에서 측정한 수치였고, dev는 on-demand compile이라 첫 요청에 컴파일 시간이 섞여 들어간다. App Router의 dev mode는 prefetch 동작도 prod와 다르게 제한적이라고 한다. prod 빌드(`npm run build && npm start`)로 다시 측정해야 의미 있는 비교가 된다.
+
+그리고 측정해서 얻은 수치가 "prefetch 속성을 켰더니 빨라졌다"로 읽힌다는 게 좀 걸렸다. 본인이 설계한 구조에서 나온 수치가 아니라 Next.js 기본 동작을 켠 효과다. 포트폴리오에 임팩트 있는 수치로 쓰려면 `Promise.allSettled` 부분 렌더나 `React.cache` dedupe, Suspense 경계 분할처럼 설계 결정의 결과로 나오는 수치가 더 맞다.
+
+dev 환경의 한계도 있고 수치 자체도 임팩트가 약해서 이번엔 그냥 정성 평가로 마무리. 탭 클릭 시 스켈레톤 노출이 눈에 띄게 줄었고, 동일 종목의 다른 탭 재방문 시엔 즉시 전환되는 느낌이 산다. 진짜 측정 가치 있는 포인트들은 트랙 G(포트폴리오 정리) 시점에 prod 빌드로 묶어서 한 번 가져갈 생각이다.
+
+---
+
+## 정리
+
+폴더 재배치만 보면 작은 작업이지만 #045에서 결정한 의도가 코드에 1:1로 표현된 시점이다.
+
+- `/stocks/[ticker]` URL이 곧 종합정보 페이지
+- 각 탭이 독립 라우트라 metadata도 page에서 직접 관리
+- `getStockByTicker`의 cache 진입점이 lib 한 곳으로 통일
+
+#040에서 시작한 라우팅 구조 작업이 #042 본 적용 → #044 부록 회고 → #045 재결정 → #046 재배치까지 여섯 번에 걸쳐 정리됐다. 결정을 한 번에 못 잡고 돌아 들어온 비용은 있지만, 결과적으로 nested 구조 + cache 진입점 통일 + per-tab metadata까지 이전보다 깔끔해진 형태다.
+
+---
+
+## 다음 작업
+
+다음 세션은 #043에서 다음 디자인 트랙으로 미뤄둔 종합정보 4칸 디자인 정리.
+
+- 4칸 헤더 톤 통일
+- 약식 차트 미리보기 정식화 (라벨, 인터랙션 범위, height)
+- 칸 사이 정렬
+- 공시 탭 헤더 영역 구분 보강 (#044에서 미뤄둠)
+
+라우팅 정리가 끝났으니 다음은 디자인 트랙으로 한 번 돌아간다.

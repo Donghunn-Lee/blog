@@ -1,0 +1,96 @@
+---
+title: "[AimTest #07] 랭킹보드를 위한 백엔드 설계"
+date: 2025-05-23
+lastmod: 2026-11-05
+summary: "랭킹보드 데이터 예시처음으로 백엔드를 구현해서 랭킹보드를 구현했다.전공수업과 정보처리기사 공부하면서 SQL을 거의 이론으로만 공부했었는데, 처음으로 실제 사용할 DB와 api까지 설계해서 만들어보니 새로운 기분이었다.백엔드를 사용해 출력하려고 했던 데이터는 위 이미지처"
+tags: ["AimTest","Backend","project"]
+images: ["/static/images/velog/4a2f3ed9-c108-4402-ae41-74c389e5394f-image.png"]
+draft: false
+---
+
+![](/static/images/velog/4a2f3ed9-c108-4402-ae41-74c389e5394f-image.png)
+
+>랭킹보드 데이터 예시
+
+처음으로 백엔드를 구현해서 랭킹보드를 구현했다.
+전공수업과 정보처리기사 공부하면서 SQL을 거의 이론으로만 공부했었는데, 처음으로 실제 사용할 DB와 api까지 설계해서 만들어보니 새로운 기분이었다.
+
+## API 설계
+
+백엔드를 사용해 출력하려고 했던 데이터는 위 이미지처럼 사용자와 점수에 대한 데이터였다. 로그인은 따로 구현하지 않았으니, 게임 플레이 후 결과를 기록하고 싶다면 닉네임만을 입력해서 데이터를 저장할 수 있도록 했다.
+
+필요했던 api는 다음과 같다. 
+>
+addRanking: 랭킹 데이터 추가
+getRankings: 전체 랭킹 조회
+getScoreRank: 점수 순위 조회
+
+```js
+// 랭킹 추가 예시
+export const addRanking = async (req: Request, res: Response) => {
+  try {
+    const { user_name, score, accuracy, play_time } = req.body;
+
+    const [result] = await pool.execute(
+      'INSERT INTO rankings (user_name, score, accuracy, play_time) VALUES (?, ?, ?, ?)',
+      [user_name, score, accuracy, play_time]
+    );
+
+    res.status(201).json({ message: 'Ranking added successfully', result });
+  } catch (error) {
+    console.error('Error adding ranking:', error);
+    res.status(500).json({ error: 'Failed to add ranking' });
+  }
+};
+```
+
+필요한 데이터가 랭킹밖에 없으니 api도 단순했다. 랭킹을 기록하고, 조회만 할 수 있으면 되었다.
+추가로 `getScoreRank`는 게임 종료 후 결과창에서 지금 획득한 점수가 전체 데이터 중 몇 등인지를 알려줄 수 있도록 추가한 api다. 
+> 플레이 결과 예상 등수 출력
+![](/static/images/velog/35a745f1-7aed-41c7-b955-818405b64cd6-image.png)
+
+## DB 연결 설정
+```js
+import mysql from 'mysql2/promise';
+import dotenv from 'dotenv';
+
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME || 'aimtest',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+});
+
+// 연결 테스트
+pool
+  .getConnection()
+  .then((connection) => {
+    console.log('Database connected successfully!');
+    connection.release();
+  })
+  .catch((error) => {
+    console.error('Database connection failed:', error);
+  });
+
+export default pool;
+```
+
+DB는 MySQL을 사용했다. 연결 설정은 간단하게 할 수 있었다.
+
+## DB (MySQL)
+workbench를 사용해서 간단히 DB커넥션을 생성하고, `aimtest`라는 이름으로 DB와 테이블을 만들었다.
+![](/static/images/velog/aeaec173-37d1-4a22-89a3-0da08a0ebfdb-image.png)
+
+사실 RDB말고 어떤 DB라도 상관 없는 정말 간단한 테이블이다.
+
+
+---
+이렇게 랭킹보드를 만들 수 있었다.
+랭킹보드가 있는 덕분에 사용자들이 조금 더 흥미를 갖고, 기록 갱신에 의미를 두고 조금 더 플레이해주지 않을까.

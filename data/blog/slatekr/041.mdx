@@ -1,0 +1,135 @@
+---
+title: "[SlateKR #041] 디자인 토큰의 일관성 회복"
+date: 2026-05-27
+lastmod: 2026-11-02
+summary: "단순히 동기화만 하면 된다고 생각으나 실상은 달랐다. styleguide 페이지의 존재 의의를 생각했을 때, 분명한 개편이 필요하다고 판단했다.원래 styleguide는 storybook 대체로 시작했다. ui 가이드 문서를 만들고 싶었는데, 혼자 작업하니까 정식 st"
+tags: ["Shadcn UI","design-tokens","oklch","SlateKR","tailwind v4"]
+images: ["/static/images/velog/140dbbe4-edb3-4748-8812-fda5acf1bbff-image.png"]
+draft: false
+---
+
+#040 종목 상세 페이지 작업을 위해 구조 점검까지 마치고, 이번에는 styleguide에 탭 레이아웃을 잡고 본 페이지에 Parallel Routes를 적용하는 것이 목표였다. 그 작업을 시작하려고 styleguide를 펼쳤더니, 본 페이지와 어긋난 부분들이 먼저 눈에 들어왔다. 재무 슬레이트 디자인이 styleguide에서는 옛 구조로 남아있고, 공시 배지 색도 본 페이지와 달랐다.
+
+단순히 동기화만 하면 된다고 생각으나 실상은 달랐다. styleguide 페이지의 존재 의의를 생각했을 때, 분명한 개편이 필요하다고 판단했다.
+
+---
+
+## styleguide 페이지의 목적
+
+원래 styleguide는 storybook 대체로 시작했다. ui 가이드 문서를 만들고 싶었는데, 혼자 작업하니까 정식 storybook을 쓸 만큼은 아니어서 컴포넌트 시각 reference로 한 페이지만 만들어두자는 의도였다. 그러다 디자인 토큰을 도입했고, 토큰 정의도 같은 페이지에 모았다. 결과적으로 토큰 정의와 컴포넌트 시연이 한 페이지에 섞여 있었다.
+
+문제는 본 페이지가 진화하면서 시작됐다. 재무 슬레이트가 Panel Expand 형태에서 연간/분기 토글 구조로 바뀌었는데, styleguide의 시연 카드는 옛 구조를 그대로 들고 있었다. 원래 의도라면 재무 슬레이드 개편 시 styleguide부터 먼저 작업해야 했다.
+
+이 상태를 유지한다면, 본 페이지를 바꿀 때마다 styleguide를 따라 업데이트할지 결정해야 했고, 그 결정 비용이 누적된다. 예상하지 못 한 부분은 아니고 오히려 예견된 구조이긴 했지만, 그다지 비용이 들지 않을 거라는 예상과는 달리 더 까다로웠다.
+
+styleguide를 **토큰 정의서**로 좁히기로 했다. 색·타이포·모션·spacing 토큰의 정의만 책임지고, 토큰이 본 페이지에서 어떻게 조합되는지는 본 페이지가 책임진다. In-Context Preview와 Interaction Demo 같은 동작 시연 카드는 제거하기로 했다.
+
+![패널 및 모션 토큰](/static/images/velog/140dbbe4-edb3-4748-8812-fda5acf1bbff-image.png)
+
+
+---
+
+## 본 페이지의 토큰 우회 조정
+
+본 페이지에서 generic color class를 쓰고 있는 곳을 전수 조사했다. 75%가 styleguide 내부 정리 대상이었는데(뒤에서 다시 나옴), 본 페이지에서 정말 손볼 곳은 두 군데였다.
+
+**첫 번째 — 가격 상승/하락 색.** `globals.css`에 `--price-up`, `--price-down`이 oklch 값으로 정의돼 있었다. 그런데 `StockHeader`는 `text-red-500`을, `WatchlistPreview`는 `text-red-400`을 직접 쓰고 있었다. 토큰을 정의해놓고 코드가 안 쓰고 있던 거다. 게다가 파일마다 명도가 달라서 같은 "상승" 색인데 두 페이지에서 다르게 보였다.
+
+**두 번째 — 공시 카테고리 배지.** `CheckpointBadge`는 shadcn `badge.tsx`의 `variant` prop으로 `"red"`, `"blue"`, `"purple"` 같은 generic 색을 넘기고 있었다. 의미가 코드에 없었다. `OWNERSHIP`이 왜 보라색인지는 매핑 표를 봐야 알 수 있었다.
+
+price 토큰은 Tailwind v4의 `@utility` 디렉티브로 노출시켜서 해결했다.
+
+```css
+@utility text-price-up {
+  color: var(--price-up);
+}
+```
+
+공시 배지는 globals.css에 의미 기반 토큰을 추가하고, CheckpointBadge가 직접 토큰 className을 매핑하게 바꿨다. `badge.tsx`의 generic variant는 사용처가 없어져서 제거.
+
+```css
+--disclosure-major-event-bg: oklch(0.96 0.04 25);
+--disclosure-major-event-text: oklch(0.50 0.20 25);
+/* ... 5종 × bg/text = 10개 */
+```
+
+---
+
+## styleguide 자체의 토큰 우회
+
+본 페이지 작업이 끝난 뒤 styleguide 코드를 보다가 다른 게 눈에 들어왔다. 인라인 스타일이 압도적으로 많았다.
+
+```tsx
+<div style={{
+  color: "var(--text-primary)",
+  fontSize: "14px",
+  padding: "12px"
+}}>
+```
+
+`text-primary` 클래스가 이미 있는데 `style={{ color: "var(--text-primary)" }}`로 쓰고 있었다. `bg-base` 클래스가 있는데 인라인 var 참조였다. 본 페이지의 토큰 우회를 잡으러 들어갔는데, **styleguide 자체가 토큰 시스템을 가장 많이 우회하고 있었다.**
+
+조사해보니 5개 파일에서 인라인 스타일의 약 75%가 단순 Tailwind className 교체 가능이었다. 동적 토큰명을 받아 swatch 색을 렌더해야 하는 경우(런타임 `var(${tokenName})`) 정도만 인라인이 정당했다. 나머지는 그냥 Tailwind를 안 쓴 거였다.
+
+일괄 전환했다. 5개 파일이 429줄에서 91줄 순증, 약 340줄이 줄었다. 시각적 결과는 동일하다. 같은 토큰을 가리키는 두 가지 방법(인라인 var, className utility)이 있었는데 한쪽만 일관되게 쓰도록 정리한 거다.
+
+---
+
+## 다시 만난 Tailwind 오류
+
+거의 마무리하던 시점에 `--text-secondary` 값을 더 진하게 조정했다. styleguide에서 다시 확인하니 색이 바뀌지 않았다. 값을 어떻게 바꿔도 그대로였다.
+
+추적해보니 `text-secondary` 클래스가 shadcn의 `--secondary` 토큰을 가리키고 있었다. SlateKR의 `--text-secondary`가 아니라.
+
+같은 함정을 [#024](https://velog.io/@dh82680/SlateKR-024-디자인-트랙-2-페이지에-토큰-적용하기)에서 한 번 풀어둔 적이 있었다. 그때 적용한 해결책이 `@utility` 디렉티브였다. shadcn 네임스페이스(`bg-secondary`)를 건드리지 않고 사이트 토큰만 별도로 노출하는 방법.
+
+같은 패턴을 다시 적용했다.
+
+```css
+@utility text-secondary {
+  color: var(--text-secondary);
+}
+```
+
+여전히 안 됐다.
+
+컴파일된 CSS를 까봤더니 `.text-secondary` 클래스가 하나뿐이었고, 그게 shadcn `--secondary`를 가리키고 있었다. `@utility` 버전은 결과물에 없었다. Tailwind가 `@theme inline`의 `--color-secondary`로 이미 같은 이름의 클래스를 생성했고, `@utility`가 dedup으로 사라진 거였다.
+
+`@utility`가 작동한 `text-price-up`은 shadcn에 같은 키워드가 없어서 통했던 거였다. 키워드가 겹치면 그렇지 않았다.
+
+진짜 해결책은 `@layer utilities`에 raw CSS를 직접 넣어 cascade 우선권으로 이기는 것이었다.
+
+```css
+@layer utilities {
+  .text-secondary {
+    color: var(--text-secondary);
+  }
+}
+```
+
+이번에야 색이 반영됐다.
+
+#024에서 `@utility`로 해결됐다고 본 건 그때 다룬 토큰(`text-secondary`)이 `@theme inline` 자동 생성과 우연히 겹치지 않은 경로로 등록돼 있었기 때문이었던 듯하다. 이번에 같은 키워드를 다시 정의하면서 `@theme inline`이 먼저 클래스를 생성하는 경로가 활성화됐고, `@utility`가 그걸 못 이긴 거다.
+
+#024 마지막에 "토큰이 프레임워크의 어느 레이어를 거쳐 클래스가 되는지를 이해하는 일"이라고 적었었는데, 그 레이어를 한 층 더 들여다봐야 했던 셈이다. `@theme inline`, `@utility`, `@layer utilities` 셋이 같은 클래스 이름을 두고 cascade에서 어떻게 우선순위를 갖는지가 핵심이었다.
+
+shadcn 키워드와 겹치지 않는 경우는 `@utility`로 충분하지만, 겹치는 경우는 `@layer utilities` raw CSS가 필요하다.
+
+---
+
+## 정리
+
+- styleguide의 정체성을 토큰 정의서로 좁혔다. 컴포넌트 시연·In-Context Preview는 제거, 색·타이포·모션·spacing 토큰 정의만 남겼다.
+- 본 페이지의 토큰 우회 두 가지(가격 색, 공시 배지)를 정리했다. 토큰 값을 한 곳에서 바꾸면 일괄 반영된다.
+- styleguide 내부 인라인 스타일을 Tailwind utility로 일괄 전환했다. 토큰 시스템의 두 층(CSS variable, Tailwind utility)을 둘 다 활용하도록 통일.
+- shadcn 키워드 충돌 회피 패턴이 정확해졌다. `@utility`가 작동하는 경우와 `@layer utilities`가 필요한 경우를 구분.
+
+Parallel Routes 본 적용을 하려고 들어왔다가 토큰 시스템 정리에 한 세션을 다 썼다. 본 적용은 다음 세션으로 밀렸지만, 토큰 시스템이 일관되게 작동하는 상태에서 슬롯 구조를 올리는 게 순서로는 자연스럽다.
+
+---
+
+## 다음 작업
+
+- 트랙 C — styleguide Layout Patterns + 종목 상세 본 페이지 Parallel Routes 적용
+- 트랙 C — `lightweight-charts` 동적 import (슬롯 분리와 함께)
+- 트랙 F7 — Next.js 16 `'use cache'` 마이그레이션 (MVP+)

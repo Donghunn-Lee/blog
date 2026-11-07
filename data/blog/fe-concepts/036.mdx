@@ -1,0 +1,264 @@
+---
+title: "[TypeScript] 타입 vs 인터페이스 — FE 개념 탐구 #036"
+date: 2026-05-08
+lastmod: 2026-11-03
+summary: "💡 핵심 요약type은 모든 타입에 이름을 붙이는 별칭, interface는 객체 형태를 선언하는 확장 가능한 도구다. 객체에 한해서는 거의 같지만, 설계 의도가 다르다.가장 큰 갈림길은 두 가지. type만 표현할 수 있는 것(유니온, 튜플, 매핑된 타입)과 int"
+tags: ["Declaration Merging","frontend","interface","type","typescript","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- `type`은 **모든 타입에 이름을 붙이는 별칭**, `interface`는 **객체 형태를 선언하는 확장 가능한 도구**다. 객체에 한해서는 거의 같지만, 설계 의도가 다르다.
+- 가장 큰 갈림길은 두 가지. **`type`만 표현할 수 있는 것**(유니온, 튜플, 매핑된 타입)과 **`interface`만 할 수 있는 것**(선언 병합).
+- 그래서 실무 기준은 단순하다. **확장 가능성이 있는 공개 API에는 `interface`, 합성·변환이 필요한 내부 타입에는 `type`.** 무조건 하나로 통일할 필요는 없다.
+
+---
+
+## type과 interface, 언제 무엇을 써야 하는가
+
+TS를 쓰다 보면 타입 선언을 두 가지 방법으로 만들 수 있는 자리가 자주 나온다. 대부분의 경우 가능할 것이다.
+
+```ts
+type User = {
+  id: number;
+  name: string;
+};
+
+interface User {
+  id: number;
+  name: string;
+}
+```
+
+객체 타입을 선언하고, 다른 타입으로 확장하고, 함수 매개변수로 받고 — 어느 쪽이든 동작한다. 그래서 처음에는 손에 익은 걸 쓰게 된다. 팀 컨벤션이 있으면 거기에 맞추고, 없으면 그냥 둘 중 하나로 굳어진다.
+
+그러다 어느 순간 차이가 드러난다. 라이브러리 타입을 확장하려는데 `type`으로 선언된 게 막힌다거나, 객체인 줄 알고 `interface`로 만들었는데 유니온이 필요해진다거나, 같은 이름으로 두 번 선언했는데 한쪽은 합쳐지고 한쪽은 에러가 난다.
+
+이 차이는 취향이 아니라 **두 도구가 서로 다른 설계 의도를 가지고 만들어졌다는 데서** 온다. 그래서 "언제 무엇을 쓸 것인가"는 둘의 구조적 차이를 알고 나면 자연스럽게 정리된다.
+
+---
+
+## 두 가지의 차이점
+
+이 두 가지의 정의는 다음과 같다.
+
+- **`type`은 타입에 이름을 붙이는 별칭(alias)이다.** 원시 타입이든, 유니온이든, 튜플이든, 객체든 — 어떤 타입이든 이름으로 묶을 수 있다.
+- **`interface`는 객체의 형태(shape)를 선언하는 도구다.** 객체 타입 전용이지만, 같은 이름으로 여러 번 선언하면 자동으로 합쳐진다.
+
+이 차이에서 모든 게 파생된다.
+
+---
+
+## `type`만 할 수 있는 것 — 표현력
+
+`type`은 객체뿐 아니라 거의 모든 타입을 별칭으로 만들 수 있다.
+
+```ts
+type ID = string | number;             // 유니온
+type Point = [number, number];         // 튜플
+type Status = "idle" | "loading";      // 리터럴 유니온
+type Callback = (x: number) => void;   // 함수 시그니처
+type Nullable<T> = T | null;           // 제네릭 + 유니온
+```
+
+`interface`는 이 중 어떤 것도 직접 표현할 수 없다.
+
+```ts
+interface ID = string | number; // ❌ 문법 에러
+```
+
+이유는 단순하다. **`interface`는 처음부터 객체 형태를 선언하기 위해 만들어진 도구**다. 객체에는 "프로퍼티 목록"이라는 명확한 구조가 있지만, `string | number` 같은 유니온은 형태가 아니라 "어느 쪽이든 가능"이라는 관계다. 관계는 모양이 아니라 별칭으로만 표현된다.
+
+이 차이는 React 코드에서 자주 부딪힌다. 리듀서 액션 타입이 대표적이다.
+
+```ts
+type Action =
+  | { type: "add"; payload: number }
+  | { type: "remove"; id: string };
+
+function reducer(state: State, action: Action) {
+  switch (action.type) {
+    case "add": /* action.payload는 number */
+    case "remove": /* action.id는 string */
+  }
+}
+```
+
+각 액션은 객체지만, 전체는 **여러 객체의 유니온**이다. 이걸 `interface`로 표현할 방법은 없다. 객체 단위마다 `interface`를 선언하고 `type Action = AddAction | RemoveAction` 식으로 우회해야 하는데, 그렇게 할 거면 처음부터 `type`으로 쓰는 게 자연스럽다.
+
+매핑된 타입(mapped type)이나 [#035에서 다룬 조건부 타입](https://velog.io/@dh82680/TypeScript-유틸리티-타입과-조건부-타입-FE-개념-탐구-035)도 마찬가지다.
+
+```ts
+type ReadonlyUser = {
+  readonly [K in keyof User]: User[K];
+};
+```
+
+이런 변환·합성은 `type`의 영역이다.
+
+---
+
+## `interface`만 할 수 있는 것 — 선언 병합
+
+같은 이름의 `interface`를 두 번 선언하면 TS가 자동으로 합친다.
+
+```ts
+interface User {
+  id: number;
+}
+
+interface User {
+  name: string;
+}
+
+// 결과: { id: number; name: string }
+const u: User = { id: 1, name: "Ethan" };
+```
+
+`type`은 같은 이름으로 두 번 선언하면 에러다.
+
+```ts
+type User = { id: number };
+type User = { name: string }; // ❌ Duplicate identifier
+```
+
+처음 보면 "이게 왜 필요하지?" 싶다. 같은 타입을 두 번 선언할 일이 일상에서 거의 없기 때문이다. 하지만 **외부 라이브러리의 타입을 확장할 때**, 선언 병합은 거의 유일한 수단이 된다.
+
+가장 흔한 예가 `Window` 객체에 전역 속성을 추가하는 경우다.
+
+```ts
+// global.d.ts
+interface Window {
+  myCustomProp: string;
+}
+
+// 어디서든
+window.myCustomProp = "hello"; // ✅ 타입 인식됨
+```
+
+`Window`는 `lib.dom.d.ts`에 `interface`로 선언돼 있다. 그래서 사용자가 같은 이름의 `interface`를 추가하면 병합된다. 만약 `type Window`였다면 이런 확장은 불가능하다.
+
+Express에서 `req.user`에 사용자 정보를 붙이는 패턴도 동일하다.
+
+```ts
+// types/express.d.ts
+declare global {
+  namespace Express {
+    interface Request {
+      user?: { id: string };
+    }
+  }
+}
+
+// 미들웨어에서
+app.use((req, res, next) => {
+  req.user = { id: "u1" }; // ✅ 타입 인식됨
+  next();
+});
+```
+
+React의 `JSX.IntrinsicElements`에 커스텀 엘리먼트를 추가하는 것도, styled-components의 `DefaultTheme`을 확장하는 것도 전부 같은 메커니즘 위에 있다.
+
+> ⚠️ **선언 병합은 위험한 게 아니라, 적합한 곳에 써야 하는 도구다.**  
+> 같은 이름이 우연히 두 번 선언돼서 의도치 않게 합쳐지는 사고는 거의 없다. 일상 애플리케이션 코드에서는 안 만나고, 만나는 자리는 "라이브러리 타입을 확장해야 하는 자리"로 거의 한정된다.
+
+---
+
+## 확장 — `extends` vs `&`
+
+둘 다 다른 타입을 확장할 수 있지만 메커니즘이 다르다.
+
+```ts
+// interface
+interface Animal { name: string }
+interface Dog extends Animal {
+  breed: string;
+}
+
+// type
+type Animal = { name: string };
+type Dog = Animal & { breed: string };
+```
+
+결과는 비슷해 보이지만, **충돌이 났을 때의 동작이 다르다.**
+
+`interface extends`는 **선언 시점에 충돌을 검사**한다.
+
+```ts
+interface A { x: number }
+interface B extends A {
+  x: string; // ❌ 'string'은 'number'에 할당할 수 없다
+}
+```
+
+`type` 인터섹션은 **그냥 합친다.** 충돌이 있으면 결과가 `never`가 되어 사실상 못 쓰는 프로퍼티가 만들어지지만, 선언 시점에는 에러를 내지 않는다.
+
+```ts
+type A = { x: number };
+type B = A & { x: string };
+// B의 x는 number & string = never
+// 선언은 통과, 사용 시점에 가서야 이상해진다
+```
+
+`interface`는 "선언 시점에 막아주고", `type`은 "쓰는 시점에 가서 무너진다." 디버깅 경험에서 이 차이는 작지 않다.
+
+---
+
+## 한눈에 비교
+
+지금까지의 차이를 정리하면 이렇다.
+
+| 항목 | `type` | `interface` |
+| --- | --- | --- |
+| 객체 형태 선언 | ✅ | ✅ |
+| 유니온 / 튜플 / 함수 시그니처 | ✅ | ❌ |
+| 매핑된 타입 / 조건부 타입 | ✅ | ❌ |
+| 선언 병합 | ❌ | ✅ |
+| 확장 방식 | `&` (인터섹션) | `extends` |
+| 충돌 검사 시점 | 사용 시점 | 선언 시점 |
+| `implements`로 클래스에서 구현 | ✅ | ✅ |
+
+표현력은 `type`이 넓고, 확장 가능성은 `interface`가 강하다. 한쪽이 다른 쪽의 상위 호환이 아니다.
+
+---
+
+## 그래서 언제 무엇을 쓸까
+
+표를 외우기보다, 두 줄짜리 판단 기준이 더 쓸 만하다.
+
+> **객체 형태이고 확장 가능성이 있다 → `interface`**  
+> **그 외 (유니온, 합성, 변환, 라이브러리 타입을 받아서 변형) → `type`**
+
+좀 더 풀어 쓰면:
+
+- **컴포넌트 props, 도메인 모델, 공개 API 타입** — `interface`. 나중에 누군가(나든 다른 사람이든) 타입을 확장하거나, 라이브러리로 export됐을 때 사용자가 augmentation할 여지를 남긴다.
+- **유니온이 필요한 타입** — 무조건 `type`. 액션 타입, 상태 머신, discriminated union이 여기 해당한다.
+- **다른 타입에서 파생된 타입** — `type`. `Partial<User>`, `Pick<Props, "id">`, `ReturnType<typeof useFoo>` 같은 것들. 이미 변환 결과라 `interface`로는 어색하다.
+- **함수 타입, 튜플** — `type`.
+
+TS는 JS 위에 얹히는 **점진적 타입 시스템**이고, **구조적 타이핑** 위에서 호환성을 본다. 그 위에서 `interface`는 "이름이 붙은 확장 가능한 모양"이고, `type`은 "어떤 타입에든 붙일 수 있는 별칭"이다. 두 도구는 같은 자리를 두고 경쟁하는 게 아니라, 살짝 다른 자리를 맡고 있다.
+
+> 💡 **하나로 통일하려는 욕심을 굳이 부릴 필요는 없다.**  
+> "팀 컨벤션으로 전부 `type`만 쓴다"는 규칙도 있고, "전부 `interface`만 쓴다"는 규칙도 있을 수 있다. 둘 다 일관성은 챙기지만, 표현이 어색해지는 자리가 반드시 생긴다. 결국 의도에 맞게 고르는 게 이상적인 방법이다.
+
+---
+
+## 자주 만나는 오해 두 가지
+
+**"객체는 interface, 나머지는 type."**  
+절반은 맞지만, 객체에서도 `type`이 더 자연스러운 자리가 있다. 유니온의 일부로 객체가 들어갈 때, 다른 타입에서 변환해서 만들 때가 그렇다. **확장 가능성**이 기준이지 **객체냐 아니냐**가 기준이 아니다.
+
+**"`interface`가 더 빠르니까 `interface`를 써야 한다."**  
+TS 컴파일러가 `interface`를 명명된 객체 타입으로 캐싱하고, `type` 인터섹션은 사용할 때마다 새로 계산한다는 차이가 있긴 하다. 다만 이 차이는 매우 큰 모노레포 같은 극단적인 케이스에서나 체감된다. 일반 애플리케이션에서 컴파일 속도를 이유로 도구를 고르는 건 마이크로 최적화에 가깝다.
+
+---
+
+## 정리
+
+`type`과 `interface`의 차이는 **표현력 vs 확장 가능성**의 트레이드오프다. `type`은 거의 모든 타입을 표현할 수 있는 대신 선언 병합을 못 하고, `interface`는 선언 병합으로 외부 확장을 받을 수 있는 대신 객체 형태에 묶인다.
+
+그래서 실무에서의 답은 "둘 중 하나"가 아니다.
+
+> **공개될 모양은 `interface`로, 내부에서 합성하고 변형하는 타입은 `type`으로.**
+
+이 감각이 잡히면 라이브러리 타입을 읽을 때 왜 어떤 건 `interface`로, 어떤 건 `type`으로 선언돼 있는지가 보인다. 우연이 아니라, 그렇게 선언한 사람이 **이 타입이 어떻게 쓰일지**를 미리 정해둔 결과다.

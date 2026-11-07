@@ -1,0 +1,156 @@
+---
+title: "[Network] CORS — FE 개념 탐구 #018"
+date: 2026-04-15
+lastmod: 2026-10-10
+summary: "핵심 요약CORS는 서버 문제가 아니라 브라우저의 보안 정책이다. Postman에서 되고 브라우저에서 안 되는 이유가 여기에 있다.브라우저는 기본적으로 다른 출처의 응답을 JavaScript가 읽지 못하게 막는다 (SOP). CORS는 서버가 특정 출처를 명시적으로 허"
+tags: ["browser","cors","frontend","http","network","web","FE 개념 탐구"]
+draft: false
+---
+
+**핵심 요약**
+
+- CORS는 서버 문제가 아니라 브라우저의 보안 정책이다. Postman에서 되고 브라우저에서 안 되는 이유가 여기에 있다.
+- 브라우저는 기본적으로 다른 출처의 응답을 JavaScript가 읽지 못하게 막는다 (SOP). CORS는 서버가 특정 출처를 명시적으로 허용할 수 있는 방법이다.
+- PUT/DELETE나 커스텀 헤더가 포함된 요청은 실제 전송 전에 브라우저가 OPTIONS 메서드로 Preflight를 먼저 보낸다.
+
+---
+
+## 목차
+
+> 1. [에러는 브라우저에서 발생했다](#에러는-브라우저에서-발생했다)
+> 2. [SOP — 브라우저가 다른 출처를 막는 이유](#sop--브라우저가-다른-출처를-막는-이유)
+> 3. [CORS — 서버가 허용을 선언하는 방식](#cors--서버가-허용을-선언하는-방식)
+> 4. [Preflight — 요청의 사전 확인](#preflight--요청의-사전-확인)
+> 5. [인증 정보를 포함할 때](#인증-정보를-포함할-때)
+> 6. [개발 환경에서 CORS를 우회하는 원리](#개발-환경에서-cors를-우회하는-원리)
+
+---
+
+## 에러는 브라우저에서 발생했다
+
+과거 팀 프로젝트를 진행하다가 이런 에러를 마주쳤다.
+
+```
+Access to fetch at 'https://api.example.com/data' from origin
+'http://localhost:3000' has been blocked by CORS policy
+```
+
+백엔드 팀원에게 물어보니 서버 로그에는 요청이 정상적으로 들어왔다고 했다.
+Postman으로 같은 요청을 보내봤더니 아무 문제 없이 응답이 왔다.
+그러면 도대체 뭐가 문제인 건가.
+
+정답은 에러 메시지에 이미 있었다. **"blocked by CORS policy"** — 서버가 거절한 게 아니라 브라우저가 막은 것이다.
+
+---
+
+## SOP — 브라우저가 다른 출처를 막는 이유
+
+브라우저에는 **SOP(Same-Origin Policy)** 라는 보안 정책이 있다.
+한 출처에서 로드된 페이지가 다른 출처의 응답을 JavaScript로 읽지 못하게 막는 정책이다.
+
+여기서 "출처(origin)"는 `프로토콜 + 호스트 + 포트` 세 가지의 조합이다.
+`http://localhost:3000`과 `https://localhost:3000`은 프로토콜이 다르기 때문에 다른 출처다.
+
+SOP가 없으면 어떻게 될까. 사용자가 악의적인 사이트에 접속한 상태에서, 그 사이트의 스크립트가 사용자의 브라우저를 통해 `https://bank.com/transfer`에 인증된 요청을 보낼 수 있다. 브라우저에는 이미 은행 로그인 쿠키가 있기 때문에 서버 입장에서는 정상적인 요청처럼 보인다. 이게 CSRF(Cross-Site Request Forgery) 공격의 기본 원리다. SOP는 이 응답을 스크립트가 읽지 못하게 막아서 공격의 효용을 떨어뜨린다.
+
+Postman이 같은 요청에서 문제없는 이유도 여기서 나온다. Postman은 브라우저가 아니라서 SOP를 적용하지 않는다.
+서버까지 요청이 도달하는 건 브라우저도 마찬가지다. 브라우저가 막는 건 **응답을 JavaScript가 읽는 것**이지, 요청 전송 자체가 아니다.
+
+---
+
+## CORS — 서버가 허용을 선언하는 방식
+
+SOP는 기본적으로 전부 막는다. **CORS(Cross-Origin Resource Sharing)**는 거기에 예외를 만드는 방법이다.
+
+서버가 응답 헤더에 허용할 출처를 명시하면, 브라우저는 그 출처에서 온 요청의 응답을 통과시킨다.
+
+```
+Access-Control-Allow-Origin: http://localhost:3000
+```
+
+이 헤더가 없거나, 현재 출처와 다른 값이면 브라우저가 응답을 차단한다.
+응답은 서버에서 왔지만 JavaScript는 그 내용을 읽을 수 없게 된다.
+
+`Access-Control-Allow-Origin: *`로 설정하면 모든 출처를 허용한다.
+빠른 해결책처럼 보이지만, 인증 정보(쿠키, Authorization 헤더)를 포함하는 요청에는 사용할 수 없다.
+어떤 출처에서도 인증 정보를 담아 요청할 수 있다는 의미가 되기 때문에 브라우저가 허용하지 않는다.
+
+---
+
+## Preflight — 요청의 사전 확인
+
+단순한 GET/POST 요청은 위 헤더 확인으로 끝난다.
+그런데 PUT, DELETE 메서드나 `Authorization`, `Content-Type: application/json` 같은 커스텀 헤더가 포함되면 브라우저는 다르게 동작한다.
+실제 요청을 보내기 전에 **OPTIONS 메서드로 사전 확인 요청**을 먼저 보낸다. 이게 Preflight다.
+
+```
+OPTIONS /api/data HTTP/1.1
+Origin: http://localhost:3000
+Access-Control-Request-Method: PUT
+Access-Control-Request-Headers: Authorization
+```
+
+브라우저는 이 세 가지를 독립적으로 확인한다.
+다시말해, **하나라도 빠져 있으면 요청을 차단**한다.
+
+Allow-Origin만 있고 Allow-Methods나 Allow-Headers가 없으면, 출처는 허용됐어도 Preflight는 실패한다.
+
+응답이 세 가지를 모두 포함하고, 서버가 이 메서드와 헤더를 허용한다고 응답하면, 그때 실제 요청이 전송된다.
+
+```
+Access-Control-Allow-Origin: http://localhost:3000
+Access-Control-Allow-Methods: PUT
+Access-Control-Allow-Headers: Authorization
+```
+
+Preflight가 존재하는 이유는 부작용 때문이다.
+DELETE나 PUT은 서버 데이터를 바꾸는 요청이다. 허용 여부를 확인하지 않고 그냥 보냈다가 서버가 이미 처리한 후에 브라우저가 응답을 차단하면 이미 늦다. 사전에 허용 여부를 확인하는 게 안전하다.
+
+Preflight 요청은 매번 발생하면 불필요한 네트워크 비용이 생긴다.
+서버 응답에 `Access-Control-Max-Age`를 설정하면 브라우저가 Preflight 결과를 캐싱해서 지정된 시간 동안 재사용한다.
+
+---
+
+## 인증 정보를 포함할 때
+
+쿠키나 `Authorization` 헤더를 담은 요청은 조건이 하나 더 붙는다. 브라우저에서 `credentials: 'include'` 옵션을 줘야 쿠키가 요청에 포함되고, 서버도 반드시 두 가지를 함께 응답해야 한다.
+
+```
+Access-Control-Allow-Origin: http://localhost:3000  // * 불가, 구체적 출처 필요
+Access-Control-Allow-Credentials: true
+```
+
+`*`와 credentials는 함께 쓸 수 없다.
+와일드카드를 허용하면 어느 출처에서나 인증 정보를 포함한 요청을 보낼 수 있게 되기 때문에 브라우저가 차단한다.
+
+---
+
+## 개발 환경에서 CORS를 우회하는 원리
+
+Next.js의 `rewrites`나 Vite의 `proxy` 설정이 CORS 문제를 해결하는 방식을 이해하면, CORS가 왜 브라우저 정책인지가 더 명확해진다.
+
+```js
+// vite.config.js
+server: {
+  proxy: {
+    '/api': 'https://api.example.com'
+  }
+}
+```
+
+이 설정이 하는 일은 요청 경로를 바꾸는 것이다.
+브라우저는 같은 출처인 `http://localhost:3000/api`에 요청을 보내고, 개발 서버가 그걸 받아서 `https://api.example.com`에 전달한다.
+
+브라우저 → 개발 서버는 같은 출처라 SOP 위반이 없고,
+개발 서버 → 실제 API는 서버 간 통신이라 CORS가 적용되지 않는다.
+브라우저가 관여하는 지점을 우회하는 구조다.
+
+프로덕션 환경에서도 같은 원리로 BFF(Backend For Frontend) 서버를 두거나 API Gateway를 경유하는 방식으로 해결하는 경우가 있다.
+
+---
+
+## 마무리
+
+CORS를 처음 마주치면 "서버 설정 문제"로 생각하기 쉽다. 서버 로그에는 요청이 들어오고, 수정도 서버에서 하기 때문이다. 그런데 실제로는 브라우저가 판단하고 차단하는 것이고, 서버는 그 판단에 필요한 정보를 헤더로 제공할 뿐이다.
+
+이걸 이해하고 나면 Preflight가 왜 생기는지, 왜 `*`가 항상 답이 아닌지, 개발 환경 proxy가 어떻게 동작하는지에 대한 의문을 풀 수 있다.

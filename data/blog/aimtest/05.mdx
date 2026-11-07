@@ -1,0 +1,158 @@
+---
+title: "[AimTest #05] 타겟 매니저 클래스 설계"
+date: 2025-05-14
+lastmod: 2026-11-07
+summary: "타겟을 생성하고, 클릭 시 점수 증가, 타겟 제거, 생성 속도 관리 등 타겟 생성과 게임 운영에 대한 로직이 게임 기능 상에서의 핵심 기능이다. 그런 기준들을 설정하고 관리하는 모듈로써, TargetManager를 클래스로 만들었다.  TargetManager  타겟 "
+tags: ["AimTest","class"]
+draft: false
+---
+
+타겟을 생성하고, 클릭 시 점수 증가, 타겟 제거, 생성 속도 관리 등 타겟 생성과 게임 운영에 대한 로직이 게임 기능 상에서의 핵심 기능이다. 그런 기준들을 설정하고 관리하는 모듈로써, `TargetManager`를 클래스로 만들었다.
+
+### TargetManager
+
+타겟 메니저는 클래스로 구현했다.
+함수가 아닌 클래스로 구현한 이유는 독립적으로 가지는 타겟 관련 상태가 많아 이를 응집하고 캡슐화하기 위한 목적이 하나, 그리고 내부에서 처리해야하는 로직이 많고 렌더링을 단순 html로써가 아닌 Canvas로 해야 한다는 점이 두 번째가 되었다. 다시말해 독립된 상태와 계산 로직이 많았던 것이 타겟 메니저를 클래스로 구현한 이유다.
+
+필드와 메소드 일람은 다음과 같다.
+> [ Field ]
+  - targets: 타겟 배열
+  - targetConfig: 타겟 설정
+  - gameArea: 맵 크기 정보
+  - nextId: 타겟 생성 카운터
+  - mapBounds: 타겟 컨테이너 경계
+  - containerConfig: 타겟 컨테이너 정보
+>
+[ Method ]
+- createTarget: 타겟 생성(중복 방지)
+- generateTarget: 컨테이너 내부에 타겟 생성 위치 선정
+- isValidPosition: 타겟 생성 유효 범위 확인
+- checkHit: 타겟 히트 처리
+- getTarget: 타겟 배열 반환
+- updateGameArea: 타겟 컨테이너 재설정
+- getMapBounds: 타겟 컨테이너 위치 반환
+
+가장 중요한 건 역시 타겟을 생성하고 제거하는 부분이다.
+
+`generateTarget` 
+```js
+private generateTarget(): Target {
+  const mapX =
+        this.mapBounds.x +
+        this.targetConfig.margin +
+        Math.random() * (this.mapBounds.width - 2 * this.targetConfig.margin);
+  const mapY =
+        this.mapBounds.y +
+        this.targetConfig.margin +
+        Math.random() * (this.mapBounds.height - 2 * this.targetConfig.margin);
+
+  const id = this.nextId++;
+
+  return {
+    id: id.toString(),
+    x: mapX,
+    y: mapY,
+    size: this.targetConfig.size,
+    hit: false,
+  };
+}
+```
+타겟 포지션을 생성하는 함수가 정확할지도 모르겠다. 타겟 컨테이너 경계 내부의 랜덤한 위치에서 타겟의 중심점을 기준으로 위치를 선정한다.
+
+그 다음 중요한 중복 제거 코드를 포함한 게 `createTarget`이다.
+
+`createTarget`
+```js
+createTarget(): Target | null {
+  if (this.targets.length >= this.targetConfig.maxTargets) {
+    return null;
+  }
+
+  const loopCount = 100;
+  let i = 0;
+
+  while (i < loopCount) {
+    const target = this.generateTarget();
+
+    if (this.isValidPosition(target)) {
+      this.targets.push(target);
+      return target;
+    }
+
+    i++;
+  }
+
+  return null;
+}
+```
+이 역시 대단한 것은 아니다. 단지 타겟을 생성하는 시점에서, 다른 타겟과 겹치는지를 판별 후 겹치지 않는다면 생성된 타겟을 반환, 겹친다면 `null`을 반환한다. 겹치는 기준은 타겟의 중심 위치가 반지름보다 가까운 것이다. 게임의 룰 상 최고 득점인 3점을 획득하려면 원의 중심을 클릭해야 하는데, 만약 반지름이 겹쳐버리면 곤란할 것이라고 생각했다.
+
+### + useTargetManager
+
+처음엔 타겟 관련 처리는 전부 타겟 메니저에 맡겨야겠다고 생각했다. 그러나 타겟을 원하는 시간에 생성시키고, 캔바스로 그렸다 치우고, 생성 간격을 조절하는 코드를 전부 때려박으니 코드가 너무 커지고 가독성이 많이 떨어졌다. 그래서 가장 기본적인 기능만을 타겟 메니저에서 구현하고, 이를 활용하여 다른 조건들까지 고려해서 훅으로 구현한 게 useTargetManager가 되었다.
+
+```js
+// 타겟 생성 간격 감소
+const decreaseSpawnInterval = useCallback((startTime: number) => {
+  const elapsedSeconds = (Date.now() - startTime) / 1000;
+  const newInterval = Math.max(
+    250, // 최소 간격 250ms
+    1000 * Math.pow(0.98, elapsedSeconds) // 매초 2%씩 감소
+  );
+  setTargetConfig((prev) => ({
+    ...prev,
+    spawnInterval: newInterval,
+  }));
+}, []);
+
+// 감소된 생성 간격 반영
+const updateSpawnInterval = useCallback(() => {
+  if (!targetManagerRef.current) return;
+
+  const spawnInterval = setInterval(() => {
+    if (targetManagerRef.current) {
+      const newTarget = targetManagerRef.current.createTarget();
+
+      if (newTarget) {
+        const updatedTargets = targetManagerRef.current.getTargets();
+        setTargets(updatedTargets);
+      }
+    }
+  }, targetConfig.spawnInterval);
+
+  return () => clearInterval(spawnInterval);
+}, [targetConfig.spawnInterval]);
+
+// 타겟메니저와 GameWorld의 타겟 상태 동기화
+const syncTargets = useCallback((onTrigger?: () => void) => {
+  if (!targetManagerRef.current) return;
+
+  const syncInterval = setInterval(() => {
+    const updatedTargets = targetManagerRef.current?.getTargets() || [];
+    setTargets(updatedTargets);
+    onTrigger?.();
+  }, 16);
+
+  return () => clearInterval(syncInterval);
+}, []);
+
+```
+
+이 밖에도 캔바스나 기본동작을 추가 처리하는 함수가 몇 가지 더 있지만, 위 3가지가 훅의 핵심 코드라고 할 수 있다.
+
+생성 간격은 다음과 같은 기준으로 줄어든다.
+>
+n번 타겟이 이전 타겟 생성 시점에서 t초만에 생성되었을 때, 이후 n+1번 타겟의 생성 시간은 t * 0.98초다. 
+>
+t2 = t1 * 0.98  
+
+즉, 타겟 생성 간격은 타겟 생성 시마다 2%씩 감소된다.
+
+이 기능을 구현하면서 정말 많은 시행착오가 있었다. 타겟 생성 시간을 관리하는 targetConfig의 spawnInterval에 의존성을 두고 생성 시간은 줄이려는데, 내가 원하는 것처럼 되지 않고 setInterval이 중첩되거나 생성 전에 초기화되거나 했기 때문이다.
+
+결국 차근 차근 분명하게 코드를 작성하고 넘어가면 해결 되는 문제였지만, 번잡하게 문어발식으로 코드를 짰던 게 문제였다.
+
+위 부분도 처음에는 GameWorld에서 구현했다가, 너무 보기가 어려워 리팩토링하면서 훅으로 분리했다.
+
+---
+이제 타겟을 관리할 코드도 구현했다. 타겟을 렌더링하는 `TargetRenderer`도 있지만 단순하니 넘어가고, 이제 시작메뉴와 결과 메뉴를 보면 좋을 것 같다.

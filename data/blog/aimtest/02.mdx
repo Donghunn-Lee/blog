@@ -1,0 +1,80 @@
+---
+title: "[AimTest #02] Figma로 사격 맵 이미지 제작/적용"
+date: 2025-04-14
+lastmod: 2026-11-07
+summary: "프로젝트 초기 세팅을 마치고 첫 번째로 진행한 작업은 맵을 구현하는 점이다.단순하게라도 원근감 있게 맵을 제작하는 것이 중요했다. 3D로 게임을 구현하는 것은 지금의 내겐 큰 어려움이 있으니, 2D 이미지로 원근감을 주는 사격 게임의 맵을 구현해야 했다.Figma를 사"
+tags: ["AimTest","canvas","design","figma"]
+images: ["/static/images/velog/73f2ee1b-e255-4e76-8cc8-0ff4321a10a8-image.png"]
+draft: false
+---
+
+## 2D로 원근감을 주는 맵 만들기
+프로젝트 초기 세팅을 마치고 첫 번째로 진행한 작업은 맵을 구현하는 점이다.
+
+단순하게라도 원근감 있게 맵을 제작하는 것이 중요했다. 3D로 게임을 구현하는 것은 지금의 내겐 큰 어려움이 있으니, 2D 이미지로 원근감을 주는 사격 게임의 맵을 구현해야 했다.
+
+## 결과물
+
+![](/static/images/velog/73f2ee1b-e255-4e76-8cc8-0ff4321a10a8-image.png)
+Figma를 사용해 조금의 노가다를 곁들여 기본 맵을 구현했다.
+
+작아보일 수 있지만, 6440 X 3800의 상당한 크기다.
+맵을 크게 구현한 건 1인칭 시점이다 보니 이동할 수 있는 시점의 각도가 어느정도는 자유로워야 FPS의 느낌을 살릴 수 있을 거라고 판단했다. 그래서 우선 크게 만들고, 확대한 시점을 적용해 여백을 확보할 수 있도록 크게 만들었다.
+
+타겟은 중앙의 복도 끝 벽에 생성할 계획이다. 단순히 타겟이 허공에서 생성되는 것보다 여러가지 동작과 상호작용을 생각했지만, 실제로 구현하기는 어려운 것 뿐이라 기본적으로는 벽에서 타겟이 나타나도록 구현할 예정이다.
+
+## 맵 이미지 적용
+
+```js
+  // 이미지 크기 계산 함수
+  const calculateImageSize = useCallback((canvas: HTMLCanvasElement, image: HTMLImageElement) => {
+    const imageAspect = image.width / image.height;
+    const canvasAspect = canvas.width / canvas.height;
+    let drawWidth = canvas.width;
+    let drawHeight = canvas.height;
+
+    if (imageAspect > canvasAspect) {
+      // 이미지가 더 넓은 경우
+      drawHeight = canvas.width / imageAspect;
+    } else {
+      // 이미지가 더 좁은 경우
+      drawWidth = canvas.height * imageAspect;
+    }
+
+    // 이미지를 배율
+    drawWidth *= 2;
+    drawHeight *= 2;
+    drawSizeRef.current = { width: drawWidth, height: drawHeight };
+  }, []);
+
+  // 이미지 로드 함수
+  const loadImage = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // 이미지가 이미 로드되어 있으면 크기만 재계산
+    if (imageRef.current && imageRef.current.complete) {
+      calculateImageSize(canvas, imageRef.current);
+      return;
+    }
+
+    // 새 이미지 로드
+    const image = new Image();
+    imageRef.current = image;
+
+    image.onload = () => {
+      calculateImageSize(canvas, image);
+      setImageLoaded(true);
+    };
+
+    image.onerror = (error) => {
+      console.error('Failed to load image:', error);
+    };
+
+    image.src = '/map.svg';
+  }, [calculateImageSize]);
+```
+전체화면 모드 기준으로 맵을 생성하는 코드 일부이다.
+맵 이미지는 `Canvas`를 사용했다. 이미지를 쉽게 렌더링 할 수 있고, 빠른 시점 전환을 부드럽게 구현해야 해서 프레임을 그리기 쉬운 도구를 사용했다.
+
+다음 할 일은 1인칭 시점을 구현하는 것이다.

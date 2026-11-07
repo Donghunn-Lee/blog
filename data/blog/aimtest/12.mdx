@@ -1,0 +1,205 @@
+---
+title: "[AimTest #12] 슬라이딩 애니메이션 - Framer Motion 도입과 blur 이슈"
+date: 2025-10-21
+lastmod: 2026-11-05
+summary: "게임 로직과 렌더 루프를 정리하고 나니, 남은 건 보는 맛이었다. 추가 기능도 거의 마치고 전체를 돌아보니, 내가 개발을 하며 마무리엔 항상 섬세하게 작업하고자 했던 애니메이션을 거의 넣지 않았다는 것을 깨달았다.거의 막바지에 이르러서 메뉴/패널에 애니메이션을 입히기로"
+tags: ["AimTest","Rendering Pipeline","animation","framer-motion"]
+images: ["/static/images/velog/0a4d7b83-ccfa-40ee-adf2-dfa6c2ff2c16-image.png"]
+draft: false
+---
+
+>게임 로직과 렌더 루프를 정리하고 나니, 남은 건 보는 맛이었다. 추가 기능도 거의 마치고 전체를 돌아보니, 내가 개발을 하며 마무리엔 항상 섬세하게 작업하고자 했던 애니메이션을 거의 넣지 않았다는 것을 깨달았다.
+>
+거의 막바지에 이르러서 메뉴/패널에 애니메이션을 입히기로 결정했다.
+
+## 1. 애니메이션 적용 - 선택과 구현
+처음엔 당연하게 지금까지처럼 css keyframe을 활용해서 애니메이션을 구현하려고 했었다. 그 과정에서 방법을 조금 찾아보다가, 실무에서 애니메이션을 구현할 때 다양한 라이브러리를 사용해서 일관성을 갖춘다는 사실을 접했고, 그 중에서도 `framer-motion`이라는 라이브러리가 자주 쓰인다는 것을 알게 되었다.
+
+### Framer Motion?
+- 인터렉티브 웹 애니메이션과 UI 디자인을 쉽게 구현할 수 있도록 돕는 라이브러리
+- **변수(Variable)**에 따라 애니메이션을 조절 가능
+
+일련의 애니메이션을 변수로 만들어 사용할 수 있는 도구인 만큼, 내게 필요한 애니메이션을 변수로 만들었다.
+
+```ts
+// utils/motion.ts
+
+export const D = {
+  base: 0.8,
+  out: 0.5,
+};
+
+export const E = {
+  in: [0.19, 1, 0.22, 1] as const,
+  out: [0.4, 0, 0.5, 1] as const,
+};
+
+export const slideUp = {
+  hidden: { opacity: 0, y: '120vh' },
+  show:   { opacity: 1, y: 0, transition: { duration: D.base, ease: E.in }},
+  exit:   { opacity: 0.9, y: '120vh', transition: { duration: D.base, ease: E.in }},
+};
+
+export const slideLeft = {
+  hidden: { opacity: 0, x: '-20vw' },
+  show:   { opacity: 1, x: 0, transition: { duration: D.base, ease: E.in }},
+  exit:   { opacity: 0, x: '-20vw', transition: { duration: D.base, ease: E.in }},
+};
+
+export const slideRight = {
+  hidden: { opacity: 0, x: '20vw' },
+  show:   { opacity: 1, x: 0, transition: { duration: D.base, ease: E.in }},
+  exit:   { opacity: 0, x: '20vw', transition: { duration: D.base, ease: E.in }},
+};
+```
+유틸 함수를 만들고, `slideUp`, `slideLeft`, `slideRight` 의 세 변수를 만들었다.
+
+애니메이션을 적용할 대상을 시작/결과 메뉴, 게임 가이드, 그리고 인게임 상태창이다. 각각 가까운 벽쪽에서 슬라이드되어 나왔다 들어가는 것으로 계획했고, 정중앙인 메뉴는 밑에서 이동하는 것으로 정했다.
+
+그리고 적용할 컴포넌트에는 아래와 같이 `<AnimatePresence>` 태그를 씌웠다.
+```tsx
+<AnimatePresence>
+  {!gameState.isGameStarted &&
+    !gameState.isGameOver &&
+    !isRankingOpen && (
+    <StartMenu
+      key="start"
+      onStart={handleGameStart}
+      onRanking={() => setIsRankingOpen(true)}
+      selectedResolution={selectedResolution}
+      onResolutionChange={setSelectedResolution}
+      animate={true}
+      volumeState={volumeState}
+      volumeActions={volumeActions}
+      />
+  )}
+</AnimatePresence>
+```
+
+라이브러리를 적용하기 어렵지 않아 보였고, 실제로도 쉽게 할 수 있었다.
+
+그랬을 터였다. 그러나, 문제가 발생했다.
+
+---
+
+## 2. 문제 발생 - '마지막에 붙는 블러 필터'
+
+![](/static/images/velog/0a4d7b83-ccfa-40ee-adf2-dfa6c2ff2c16-image.png)
+
+먼저 이미지를 보면, 시작 메뉴와 가이드, 그리고 결과 메뉴 역시 창의 배경은 tailwind의 `backdrop-blur` 속성을 이용해 필터를 적용했었다. 
+
+그런데 애니메이션을 적용하고 나서 보니,
+**블러가 애니메이션 종류 후에 한 틱에 적용되는 것을 확인했다.**
+
+가이드와 상태창은 문제가 없었다. 시작 메뉴와 결과 메뉴에서만 이러한 현상이 발생했다.
+
+## 3. 원인 분석 - transform과 Paint
+
+적용된 메뉴 컴포넌트의 구조는 다음과 같았다.
+```tsx
+return (
+  <motion.div> // framer 적용 태그
+    <PanelOverlay> // 메뉴창 컨테이너
+      <div> // 메뉴 요소
+      </div>
+    </PanelOverlay>
+  </motion.div>
+)
+```
+`GameGuide`와 `GameStatus` 컴포넌트는 여기서 `PanelOverlay`를 빼면 같은 구조다.
+
+메뉴들의`backdrop-blur`는 `PanelOverlay` 내부에 적용되어 있었고, 다른 두 컴포넌트는 `<motion.div>`태그에 기존 `<div>`의 클래스를 그대로 옮겨넣었다.
+
+그런데 앞서 가이드와 상태창은 문제가 없었다고 했다.
+
+그렇다. 두 케이스의 차이는 **`backdrop-blur`가 적용된 요소가 애니메이션 주체인 `<motion.div>`인가 아닌가** 인 것이다.
+
+### transform과 Paint
+두 구조의 차이는 `transform`과 브라우저 `Paint` 의 동작 방식에 있었다.
+
+원인을 제대로 파악하려면 브라우저 렌더링 파이프라인을 먼저 알아봐야 한다.
+>HTML -> DOM -> Render Tree -> Layout -> Paint -> Composite -> 화면 출력
+
+여기서 `transform`은 **Composite** 단계, `blur`는 **Paint** 단계에서 처리된다.
+
+내가 설정한 애니메이션은 기본적으로 `transform`으로 동작한다. 위치 이동도 내부적으로는 `translate`로 변환되어 전달된다.
+
+그렇다면 이 두 사실이 무엇을 뜻하느냐,
+
+**`framer`를 사용해 설정한 애니메이션이 `blur` 가 먼저 적용된 다음에 적용된다는 것이다.**
+
+때문에 구조상 `blur`가 적용된 부분이 `<motion>` 태그의 자식 요소였기 때문에, 애니메이션이 적용될 때 `blur`가 같이 처리되지 않고 애니메이션 종료 후 이미 적용되어있는 모습만을 확인할 수 있었던 것이다.
+
+---
+
+## 4. 해결 방법 - 같은 요소에 속성을 적용한 "합성 레이어"
+
+원인을 정확히 파악한 다음 생각할 수 있는 해결책은 당연히 이 두 가지 속성을 같은 단계에 적용될 수 있도록 하는 것이다.
+
+단순히 생각해보면 애초에 적용 단계가 다른데 어떻게 합치는 것인가 생각할 수 있겠지만, 나는 이미 앞서 가이드에서 블러가 제대로 애니메이션과 함게 적용되는 것을 확인했다.
+
+### `<motion>` 에 `blur`를 직접 적용하기
+앞서 확인했던 것처럼, 해결 방법은 **애니메이션이 적용되는 요소에 `blur` 를 직접 적용**하는 것이다.
+
+그렇다면 다시 어째서 이 방법으로 문제가 해결되는지를 확인해봐야 한다.
+
+브라우저 렌더링 파이프라인에 따라 속성들이 처리되는 것은 맞지만, 이유를 찾아보면서 여기엔 내가 알지 못하는 특성이 하나 있다는 것을 확인할 수 있었다.
+
+>서로 다른 노드에 transform(Composite)과 backdrop-filter(Paint)가 분리되면, Composite → Paint → Composite 파이프가 같은 프레임 내에서 결합되지 않아 시점 차가 체감될 수 있다. 동일 노드에 결합하면 브라우저가 합성 레이어로 승격해 한 번의 합성 패스에서 처리한다.
+
+시작 메뉴와 결과 메뉴에선 `PanelOverlay` 로 전체 노드를 래핑하며 그 안에 `blur`가 적용되어 있었고, `<motion>` 태그가 이 패널을 감싸는 구조였다.
+즉, 다른 노드이기 때문에 별개의 레이어로 처리한다.
+
+반면 `<motion>` 태그에 직접 `backdrop-blur`를 적용한 가이드와 상태창은 이 두 속성이 같은 레이어로 처리되어 애니메이션 충돌이 이러나지 않은 것이다.
+
+이 밖에도 레이어가 합성되는 속성들의 조합을 조금 더 알아보았다.
+
+| 속성 조합 | 동작 방식 | 설명 |
+| --- | --- | --- |
+| `transform + opacity` | GPU 합성 | Framer Motion의 기본 패턴 |
+| `transform + filter(blur)` | GPU 합성 (최신 브라우저) | 블러, 밝기 등 효과와 이동이 동시에 가능 |
+| `will-change: transform, opacity` | 사전 승격 | 미리 GPU texture로 할당되어 프레임 드롭 방지 |
+| `translateZ(0)` | 강제 GPU | 레거시 방식의 “force composite layer” |
+
+아무튼!
+
+블러 문제는 메뉴 컴포넌트의 `<motion>` 태그를 지우고 패널의 블러가 적용된 요소를 `<motion>` 으로 교체하면서 해결할 수 있었다.
+
+```tsx
+// PanelOverlay.tsx
+return (
+    <div className="absolute inset-x-0 w-full">
+      <div className="flex justify-center">
+        <motion.div
+          variants={slideUp}
+          initial="hidden"
+          animate="show"
+          exit="exit"
+          className={`transform rounded-lg bg-black bg-opacity-60 p-4 text-white shadow-lg backdrop-blur-sm lg:p-6 xl:p-8 ${
+            className ?? ''
+          }`}
+        >
+```
+
+---
+
+## 5. 정리
+
+문제 해결을 통해 완성한 결과물은 이렇다.
+
+![](/static/images/velog/0b609c71-3870-4c44-9d33-5f515af69b35-image.gif)
+
+단순히 애니메이션을 적용하는 간단한 작업이라고 생각했는데, 또 예기치 못하게 브라우저 렌더링 파이프의 독특한 특성에 대해 알게 되는 사건이었다.
+
+앞으로는 노드의 구성에 따라 속성이 적용되는 시점이 전혀 다르게 적용될 수 있다는 사실을 명심하고 개발을 이어갈 수 있을 것 같다.
+
+---
+
+🧩 다음 목표
+
+애니메이션까지 마무리했고, 이제 디자인적으로 마무리 할 건 색상 정도?
+가이드 색상을 바꾼 것처럼 버튼 색도 초록색이 좋은가 고민중이다.
+
+아, 그리고 메인 페이지와 게임이 실행된 화면에서도 조금 디자인이 필요하다는 것을 깨달았다. 이건 기능이라기보다 미적인 영역이라, 오히려 더 시간이 걸릴지도 모르겠다.
+
+금방 마무리하고 새 프로젝트를 하려 했는데, 생각보다 자꾸 시간이 걸려서 난감하다. 그래도 뭐 마무리는 지어야 맘이 편하겠지.

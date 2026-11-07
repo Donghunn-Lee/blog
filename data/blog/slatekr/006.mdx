@@ -1,0 +1,78 @@
+---
+title: "[SlateKR #006] Next.js 데이터 계층 설계"
+date: 2026-04-12
+lastmod: 2026-10-29
+summary: "데이터는 DB에 다 들어가 있다. 이제 Next.js에서 이걸 읽어서 화면에 쓸 수 있는 형태로 만드는 단계다.처음에는 그냥 페이지에서 DB 쿼리를 바로 날리면 되지 않나 싶었다. 실제로 Aim Test에선 그렇게 했었다.Next.js App Router에서도 Serv"
+tags: ["Data Layer","mysql","next.js","SlateKR","typescript"]
+draft: false
+---
+
+데이터는 DB에 다 들어가 있다. 이제 Next.js에서 이걸 읽어서 화면에 쓸 수 있는 형태로 만드는 단계다.
+
+처음에는 그냥 페이지에서 DB 쿼리를 바로 날리면 되지 않나 싶었다. 실제로 `Aim Test`에선 그렇게 했었다.
+Next.js App Router에서도 Server Component가 async로 동작하니까 기술적으로는 가능하다.
+
+그런데 그렇게 하면 페이지가 DB 컬럼 구조를 그대로 알게 된다.
+`market_cap`이라는 컬럼명, snake_case 필드들, `Date` 객체 그대로 넘어오는 날짜.
+나중에 DB 구조가 바뀌면 페이지까지 같이 손봐야 한다.
+기획서에 "외부 API 응답은 반드시 정규화 레이어를 거쳐 내부 도메인 모델로 변환한다"고 적어뒀는데,
+DB도 결국 외부 데이터 소스라는 점에서 같은 원칙이 적용된다고 봤다.
+
+그래서 `lib/` 계층을 중간에 두는 구조로 잡았다.
+
+---
+
+## 구조
+
+```
+DB
+ ↓
+lib/ (DB 조회 + 도메인 모델로 변환)
+ ↓
+Page / Component (도메인 모델만 받음)
+```
+
+`lib/`이 하는 일은 두 가지다.
+DB에서 raw 데이터를 가져오고, 그걸 UI가 소비하기 좋은 형태로 변환한다.
+
+---
+
+## 타입을 두 종류로 나눈 이유
+
+타입은 두 종류로 나눴다.
+
+DB에서 나오는 raw 형태인 `StockRow`, `DailyPriceRow`, `FinancialRow`는 각각 `lib/stocks.ts`, `lib/prices.ts`, `lib/financials.ts` 안에 뒀다.
+이 타입들은 해당 파일 내부 구현 세부사항이라 밖으로 export할 이유가 없어서다.
+UI가 실제로 받는 도메인 모델인 `StockSummary`, `StockPriceSnapshot`, `StockFinancialSummary`는 `hared/types/stock.ts`에 뒀다. camelCase, 날짜는 문자열, UI에 필요한 필드만.
+
+굳이 나눈 이유는 변환이 일어나는 지점을 명확히 하기 위해서다. `lib/` 함수 안에서만 Row 타입을 보고, 그 밖에서는 도메인 모델만 보이게.
+
+---
+
+## lib/ 파일 구성
+
+세 파일을 만들었다.
+
+`lib/stocks.ts` — 종목 기본 정보. `getStockByTicker`는 상세 페이지 진입 시, `searchStocks`는 검색 자동완성에서 쓸 것이다.
+
+`lib/prices.ts` — 가격 데이터. `getDailyPrices`는 차트용 1년치 일봉, `getLatestPrice`는 상단 요약의 현재가/등락에 쓸 것이다.
+
+`lib/financials.ts` — 재무 데이터. `getLatestFinancial`은 재무 요약 섹션, `getFinancials`는 연도별 추이에 쓸 것이다.
+
+지금 당장 모든 함수가 다 쓰이는 건 아니다. 페이지를 만들면서 하나씩 연결될 것들이다.
+
+---
+
+## mysql2 연결
+
+DB 클라이언트는 `mysql2`를 썼다. Prisma 같은 ORM도 있지만, 이 프로젝트는 DB 쓰기가 거의 없고 읽기 전용에 가깝다.
+ORM의 마이그레이션 관리나 스키마 동기화 같은 기능이 크게 필요 없는 상황이라 직접 쿼리를 쓰는 게 더 단순하다고 판단했다.
+단순히 사용해 본 것이라 조금은 익숙하다는 이유도 조금은 있다.
+
+connection pool을 `lib/db.ts` 하나에서 만들어서 export하고, 나머지 lib 파일들이 이걸 가져다 쓰는 구조다.
+
+---
+
+`lib/` 계층이 완성됐다. 이제 페이지에서 `getStockByTicker`를 호출하면 도메인 모델이 바로 돌아온다.
+DB 컬럼 구조를 몰라도 된다. 이 레이어를 먼저 만들어두길 잘했다는 생각이 든다.
+다음은 라우팅 구조를 잡고 홈과 검색 UI부터 시작할 것이다.

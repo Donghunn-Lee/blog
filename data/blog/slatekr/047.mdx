@@ -1,0 +1,229 @@
+---
+title: "[SlateKR #047] 종합정보 4칸의 헤더 톤 정리"
+date: 2026-06-03
+lastmod: 2026-11-01
+summary: "\\[원래는 헤더만 손보면 끝날 줄 알았는데 그렇지 않았다. shadcn primitive에 박힌 강제 height가 정렬을 깨먹고 있었고, 공시 미리보기에 AI 요약 힌트를 어디에 둘지 정하는 과정에서 absolute positioning이 필요했다. 차트 워터마크를 "
+tags: ["Shadcn UI","design","lightweight-charts","next.js","SlateKR","tooltip"]
+draft: false
+---
+
+[#043](https://velog.io/@dh82680/SlateKR-043-종합정보-탭-22-그리드와-가격-통계-칸-구현)에서 종합정보 탭을 2×2 그리드로 묶고 마지막에 디자인 작업을 미뤄뒀다. 칸 헤더 톤 불일치, 약식 차트 미리보기, 행 높이 정렬 — 이 세 가지가 그때 적어둔 항목이었다. #046까지 라우팅 구조 정리가 끝나서 이번 세션은 그 디자인 작업을 받아 풀었다.
+
+원래는 헤더만 손보면 끝날 줄 알았는데 그렇지 않았다. shadcn primitive에 박힌 강제 height가 정렬을 깨먹고 있었고, 공시 미리보기에 AI 요약 힌트를 어디에 둘지 정하는 과정에서 absolute positioning이 필요했다. 차트 워터마크를 끄려고 보니 라이선스 attribution 처리가 같이 따라왔다. 작업 단위는 네 커밋으로 갈렸다.
+
+---
+
+
+## 4칸이 같은 패널로 안 읽혔던 이유
+
+문제 인식은 단순했다. 4칸을 한 번에 봤을 때 같은 정보 레벨로 안 읽혔다. 헤더 영역의 토큰이 칸마다 미세하게 달라서다.
+
+| 칸 | Variant | 보더 | 제목 크기 | 우상단 액션 | 액션 색 |
+|---|---|---|---|---|---|
+| 차트 | plain | noBorder | text-sm | 전체 보기 → | muted-foreground |
+| 재무 | sage | 있음 | text-xs (compact) | 인라인 링크 + 연간/분기 탭 | sage-accent |
+| 공시 | amber | 있음 | text-sm | 전체 보기 → | amber-accent |
+| 가격통계 | sky | 있음 | text-sm | 없음 | — |
+
+차트만 보더가 빠져 있어 다른 셋과 패널 레벨이 달랐고, 재무는 제목 크기가 한 단계 작았다. 액션 링크 색이 셋은 variant accent, 차트는 muted, 가격통계는 없음. 헤더 하단 마진도 mb-1/mb-4가 섞여 있었다.
+
+표준을 정해야 4칸에 일괄 적용할 수 있다. 항목별로 결정한 게 이렇다.
+
+**제목과 마진**은 단순. `text-sm font-semibold text-muted-foreground`, `mb-3`로 통일. 재무 compact 분기는 제거.
+
+**보조 라벨**은 좀 고민했다. 차트 라벨이 `005930 — 최근 3개월`로 종목코드를 머리에 달고 있어서 칸 헤더 톤과 안 맞았다. 종목코드 빼고 `가격 차트 · 최근 3개월` 형태로. 미들닷 뒤 보조 라벨은 `text-xs text-muted-foreground/70`로 한 단계 약하게.
+
+그러면 다른 칸도 보조 라벨을 다는 게 자연스러운가 싶었는데, 막상 보니 그렇지 않았다. 재무는 우측에 토글이 있어 보조 라벨이 또 들어가면 시선이 너무 분산되고, 공시는 미리보기 위치만으로도 "최근"이 자명해서 `(최근 3개월)`이 오히려 중복이었다. 가격 통계는 본문에 52주/1M/3M/1Y가 다 있어 헤더로 하나만 올리기도 애매. 결국 차트만 보조 라벨을 갖는 비대칭으로 마무리. 인위적으로 통일하면 노이즈가 늘어날 뿐이라 본질 그대로 두는 게 맞다고 봤다.
+
+**액션 링크 색**은 muted-foreground로 통일했다. 처음엔 각 칸의 variant accent(sage/amber/sky)로 색을 살리는 쪽도 생각했지만, 차트가 무채색 원칙이라 그 패턴에 안 맞고 가격통계는 액션 자체가 없다. 4칸 일관성을 액션 색에 모두 걸려고 하면 두 칸이 무너진다. variant 색은 패널 배경에서만 표현되고, 헤더 액션은 차분한 톤으로 맞추는 게 정합도가 더 좋았다.
+
+```tsx
+// 표준
+<div className="mb-3 flex items-center justify-between gap-2">
+  <h2 className="text-sm font-semibold text-muted-foreground">
+    {label}
+    {subLabel && (
+      <span className="ml-1.5 text-xs font-normal text-muted-foreground/70">
+        · {subLabel}
+      </span>
+    )}
+  </h2>
+  {/* 우측 액션 */}
+</div>
+```
+
+차트 칸은 `<StockPanel noBorder>`에서 `noBorder` 제거. 무채색 원칙은 variant를 안 입히는 걸로 유지하되, 보더는 다른 칸과 같은 두께로 살린다.
+
+---
+
+
+## TabsList의 h-9 강제
+
+표준을 적용하고 새로고침했는데 재무 칸 헤더가 미묘하게 다른 칸보다 아래로 밀려 보였다. 같은 `mb-3`을 줬는데 왜 정렬이 안 맞나 싶어 DevTools로 헤더 row를 열어보니 TabsList가 강제로 높이를 잡고 있었다.
+
+```css
+.group-data-horizontal\/tabs\:h-9:is(
+  :where(.group\/tabs):where([data-orientation="horizontal"]) *
+) {
+  height: calc(var(--spacing) * 9);
+}
+```
+
+shadcn `TabsList` primitive 안에 `data-orientation="horizontal"`일 때 `h-9`이 강제로 들어가는 패턴. 호출처에서 `className="h-6 p-0"`을 넘겨도 horizontal data-attr가 우선해서 결국 h-9으로 잡힌다. 텍스트 라벨(`text-sm`, line-height 약 20px)보다 한 단계 큰 높이라 헤더 row가 그만큼 키워지고 있었다.
+
+호출처 한 곳(재무 칸)에서만 쓰이는 상황이라 primitive 쪽을 직접 수정하기로 했다. horizontal 분기만 제거하고 vertical 분기(`h-fit`, `flex-col`)는 유지. 추후 vertical orientation으로 쓸 일이 생겨도 호환된다.
+
+> primitive를 수정하는 건 처음엔 좀 망설여졌다. shadcn 자체가 "복붙해서 직접 소유"하는 모델이라 수정 자체엔 문제가 없지만, 호출처에서 클래스를 더 박는 우회 방법도 있긴 했다. 다만 그러면 호출처마다 강제 height를 무력화하는 클래스를 또 박아야 하고, primitive 의도와 호출처 의도가 어긋난 상태로 굳는다. 사용처가 한 곳뿐인 지금 정리하는 게 깔끔하다고 봤다.
+
+이 일을 계기로 shadcn 도입 자체를 한 번 더 봐야겠다는 생각이 들었다. SlateKR이 도입 초기에 UI 구현 편의를 위해 shadcn을 끌어왔는데, 막상 보면 직접 구현이 더 깔끔하지 않았을까에 대한 의문이 들기 시작했다. 탭 nav는 필요에 따라 `StockTabNav`로 직접 만들었고, primitive 수정이 필요한 경우도 생겼다. 포트폴리오 정리 시점에 한 번 정돈해야 할 항목으로 로드맵에 따로 적어뒀다.
+
+## 재무 토글은 헤더 라인 밖으로
+
+h-9 강제는 해결했는데, 재무 칸이 여전히 마음에 걸렸다. 다른 셋은 헤더 라인이 "라벨 + 우측 액션 1개" 구조인데 재무만 "라벨 + 토글 + 전체 보기 링크" 셋이 들어가 무게가 달랐다.
+
+토글을 헤더에서 분리해서 별도 행으로 내렸다.
+
+```
+[ 재무 요약 .................... 전체 보기 → ]   ← 헤더 (다른 셋과 동일)
+[ 연간 | 분기 ]                                   ← 토글
+[ 단위: 억원 (별도 표기 없는 항목 기준) ]
+[ ─ 재무 테이블 ─ ]
+```
+
+패널 높이가 한 줄 늘어나는 트레이드오프가 있긴 한데, 2×2 그리드라 같은 행의 차트 칸이 늘어난 높이만큼 자연스럽게 흡수했다. #043에서 행 높이 정렬이 어색하다고 적어뒀던 게, 차트 height 축소를 따로 안 해도 토글 분리로 균형이 맞춰지는 모양으로 풀렸다. 의도한 결과는 아니었지만 결과적으로 한 항목이 줄어든 셈이다.
+
+---
+
+
+## AI 요약 기능 툴팁
+
+공시 미리보기에 AI 요약 기능 힌트를 넣기로 했다. 공시 탭에는 각 공시별 AI 요약 버튼이 있는데, 미리보기에선 그걸 노출하지 않는다. 미리보기는 조회용으로 유지하고 깊이 보려면 탭으로 진입하라는 동선이다. 그러면 "AI 요약 기능이 있다"는 사실 자체를 사용자가 인지할 수단이 필요해진다.
+
+처음에 잡았던 안은 우상단을 `flex-col items-end`로 묶어 "전체 보기 →" 아래에 작은 힌트 한 줄을 두는 형태였다.
+
+```
+[ 최근 공시 ............... 전체 보기 → ]
+                            AI 요약 ⓘ
+```
+
+코드는 단순했는데 막상 렌더하니 문제가 생겼다. flex-col로 두 줄을 묶으니 "전체 보기 →"가 한 줄 위로 밀려서 다른 3칸의 헤더 라인과 수직 정렬이 안 맞았다. 4칸 헤더 라인을 그렇게 맞추려고 표준 작업을 한 건데 여기서 무너지면 의미가 없다.
+
+absolute positioning으로 갈아탔다.
+
+```tsx
+<div className="relative">
+  <div className="absolute right-0 top-[-18px]">
+    <DisclosureAIHint />
+  </div>
+  <Link href={...}>전체 보기 →</Link>
+</div>
+```
+
+"전체 보기 →"는 제자리에 두고 힌트만 패널 상단 `p-6` 여백 안쪽으로 띄웠다. 헤더 라인의 수직 정렬은 4칸 그대로 보존된다. `top-[-18px]`은 시각 확인하면서 미세 조정한 값이다. 모바일에서도 slate가 크게 변하지 않아서 문제없었다.
+
+### Tooltip이 hydration을 깨먹어서
+
+힌트 컴포넌트는 처음엔 인라인으로 적어뒀다. 그러다 페이지에서 hydration error가 떴다. Radix `Tooltip`이 내부적으로 Portal로 `document.body`에 마운트되는 구조라, Server Component 안에 인라인으로 두면 서버 HTML과 클라이언트 hydration DOM이 일치하지 않는다.
+
+힌트만 별도 `"use client"` 컴포넌트로 분리.
+
+```tsx
+// DisclosureAIHint.tsx
+"use client";
+import { Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+export const DisclosureAIHint = () => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <span className="inline-flex cursor-help items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground/70">
+        AI 요약
+        <Info className="size-3" />
+      </span>
+    </TooltipTrigger>
+    <TooltipContent>공시 탭에서 각 공시별 AI 요약 기능을 사용할 수 있어요</TooltipContent>
+  </Tooltip>
+);
+```
+
+---
+
+
+## 차트 인터랙션과 워터마크
+
+종합정보의 약식 차트는 미리보기인데 마우스 휠로 줌이 되고 드래그로 팬이 됐다. 차트 탭의 풀 차트와 같은 컴포넌트(`StockChart`)를 그대로 가져다 쓰고 있어서다. 풀 차트는 인터랙션이 자연스럽지만 미리보기에선 과하다.
+
+`interactive` prop을 컴포넌트에 신설하고 기본값 `true`로 뒀다. 종합정보 호출 측에서만 `interactive={false}`를 명시한다.
+
+```ts
+const chart = createChart(containerRef.current, {
+  // ...
+  layout: { ..., attributionLogo: false },
+  handleScroll: interactive,
+  handleScale: interactive,
+});
+```
+
+`attributionLogo: false`도 같이 들어갔다. lightweight-charts가 기본으로 좌하단에 TradingView 워터마크를 그리는데, 4칸 그리드 안에서 차트 칸 좌하단에 작게 박혀 시각적으로 산만했다. 옵션 하나로 끌 수 있다.
+
+다만 라이브러리 라이선스상 워터마크를 끄려면 attribution을 다른 형태로 표시해야 한다. 사용자가 볼 수 있는 페이지에 TradingView.com 링크가 있으면 된다. footer에 한 줄 추가.
+
+```tsx
+<p>
+  차트: <Link href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+    TradingView Lightweight Charts™
+  </Link>
+</p>
+```
+
+Footer 컨테이너 폭이 `max-w-5xl`로 본문(`max-w-4xl`)과 안 맞아 있어서 같이 정렬. 그리고 `export function` 패턴이 프로젝트의 다른 컴포넌트 컨벤션(const + 화살표 함수 named export)과 달라서 같이 통일.
+
+---
+
+
+## 곁가지 — dynamic loading CLS
+
+차트 작업 중에, 차트 슬레이트의 스켈레톤이 잘 보이지 않는다는 점을 새롭게 확인했다.
+
+`StockChartDynamic`은 `next/dynamic`으로 `ssr: false` 옵션을 줘서 로드한다. 차트 라이브러리가 클라이언트 전용이라 SSR 단계에선 렌더할 수 없다. 그런데 `loading: () => null`로 박혀 있어서, 서버 HTML에는 빈 공간이 가고 클라이언트에서 dynamic import가 끝난 시점에 차트가 들어왔다. 빈 공간 → 차트 전환에서 레이아웃이 한 번 밀린다(CLS).
+
+Suspense의 `<ChartSkeleton />` fallback은 있긴 했는데, DB 쿼리가 revalidate 캐시 hit이라 거의 즉시 resolve되어 실질적으로 안 보이는 상태였다. skeleton이 안 보이는 건 정상이지만, 그 뒤의 dynamic loading 단계엔 placeholder가 없었던 게 사각지대였다.
+
+```ts
+{ ssr: false, loading: () => <div className="h-[380px] rounded-xl border bg-elevated" /> }
+```
+
+무애니메이션 placeholder로 자리만 미리 확보. dynamic import는 캐시 hit 시 빠르게 끝나는 단계라 `animate-pulse`까지 박으면 시각 노이즈가 된다. border + bg-elevated로 다른 슬레이트와 톤 일관성 유지.
+
+---
+
+
+## 정리
+
+작업 항목은 단순했지만 곁가지가 꽤 붙었다.
+
+- 4칸 헤더의 토큰 표준 정의 → 4칸 일괄 적용
+- 보조 라벨은 본질대로 비대칭 허용
+- 액션 색은 variant accent 포기, muted로 통일
+- TabsList primitive `h-9` 강제 제거
+- 재무 토글을 헤더에서 분리
+- AI 힌트는 absolute로 부상
+- Radix Tooltip Portal hydration → Client Component 분리
+- 차트 `interactive` prop 분기로 약식만 줌·팬 제한
+- 양쪽 워터마크 제거 + footer attribution
+- dynamic loading CLS placeholder
+
+이렇게 적어두니 디자인 작업이라기보다 미세 정합 작업의 연속이었다. 4칸을 같은 패널 레벨로 만들겠다는 의도 하나가 헤더 → primitive → 토글 행 분리 → AI 힌트 위치 → hydration → 차트 인터랙션 → 워터마크 → footer까지 줄줄이 끌어왔다. 디자인 일관성이 한 곳을 고치면 끝나는 작업이 아니라는 걸 다시 한 번 느꼈다.
+
+세션 말미에 한 가지 더 생긴 글감은 탭 nav 디자인이다. SlateKR 이름의 "slate(판)" 메타포를 살려서 폴더 탭(파일 폴더처럼 겹쳐진 판을 전환하는 모양)으로 갈 수 있지 않을까 하는 얘기를 나누다 끝났다. 종합정보 4칸 그리드와의 통합 방식이 결정 포인트라 별도 세션에서 한 번에 다룰 만하다.
+
+## 다음 작업
+
+다음 세션은 후보를 두고 있다.
+
+- **StockTabNav 폴더 탭 디자인** — slate 메타포 강화. 별도 세션 권장
+- **검색 입력 텍스트 색상 수정** — 즉시 가능한 작은 항목
+- **1Y 수익률 데이터 부족 종목 가드** — 1년 미만 데이터에서 prices[0]이 상장일이라 "상장 이후 수익률"이 1Y로 표시되는 케이스
+- **모바일 점검 / 코드 리뷰** — F1, F3
+
+폴더 탭 디자인은 의사결정 비중이 커서 작업 들어가기 전에 한 번 정리하는 시간을 두는 게 좋을까 고민이 되는데, 우선 작업을 전제로 계획하고 너무 커지만 계획과 수정을 분리할 생각이다.

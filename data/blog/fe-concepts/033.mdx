@@ -1,0 +1,265 @@
+---
+title: "[TypeScript] 타입 좁히기 — FE 개념 탐구 #033"
+date: 2026-05-06
+lastmod: 2026-11-04
+summary: "💡 핵심 요약타입 좁히기는 union처럼 여러 가능성을 가진 변수를, 컴파일러가 코드 흐름을 따라가면서 더 좁은 타입으로 추론하는 동작이다.좁히기를 트리거하는 도구는 typeof / instanceof / in / 사용자 정의 타입 가드 / 판별 가능한 union 등"
+tags: ["control flow analysis","frontend","type guard","type narrowing","typescript","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- 타입 좁히기는 union처럼 여러 가능성을 가진 변수를, **컴파일러가 코드 흐름을 따라가면서** 더 좁은 타입으로 추론하는 동작이다.
+- 좁히기를 트리거하는 도구는 `typeof` / `instanceof` / `in` / 사용자 정의 타입 가드 / 판별 가능한 union 등이다. 어느 것을 쓸지는 **무엇으로 구분하느냐**(원시 타입인가, 클래스인가, 속성인가, 리터럴 값인가)로 결정된다.
+- 타입 단언(`as`)과는 본질적으로 다르다. 단언은 **검사 없이 컴파일러를 속이는 것**이고, 좁히기는 **실제 런타임 검증이 코드에 존재**한다. 그 차이가 안전성을 만든다.
+
+---
+
+## union을 받는 함수 안에서 막히는 순간
+
+`string | number` 처럼 union 타입을 받는 경우를 살펴보자.
+
+```typescript
+function getLength(value: string | number): number {
+  return value.length;
+  //           ^^^^^^ Property 'length' does not exist on type 'string | number'
+}
+```
+
+`string`에는 `length`가 있고 `number`에는 없다. **둘 중 어느 쪽인지 컴파일러가 모르는 상태**라, 두 타입의 공통 속성만 허용하기 때문에 막힌다.
+
+이 상황은 union을 쓰는 한 매번 등장한다. API 응답이 성공/실패로 갈릴 때, 폼 입력값이 문자열이거나 숫자일 때, DOM 이벤트의 타겟이 여러 종류일 때 — 전부 union이다. 어느 시점엔가 **"지금 이 변수는 둘 중 한쪽이다"라고 컴파일러를 납득시켜야** 한다.
+
+타입 좁히기는 그 납득을 만드는 방법이다. 사실 전혀 거창할 것 없는 당연한 개념이며 조건 분기 이지만, 이게 안 되면 `as`로 강제 단언하거나 `any`로 도망칠 수밖에 없고 이는 TS를 쓰는 의미를 무너뜨리게 된다.
+
+---
+
+## 컨트롤 플로우 분석 — 컴파일러가 분기를 따라간다
+
+좁히기의 출발점은 **컴파일러가 코드 흐름을 위에서 아래로 따라가면서, 각 시점에 변수의 가능한 타입을 갱신한다**는 사실이다. 이 동작을 [컨트롤 플로우 분석(Control Flow Analysis)](https://www.typescriptlang.org/docs/handbook/2/narrowing.html)이라고 한다.
+
+```typescript
+function example(value: string | number) {
+  // value: string | number
+
+  if (typeof value === "string") {
+    // value: string  ← string으로 좁혀짐
+    value.toUpperCase();
+  } else {
+    // value: number  ← number로 좁혀짐
+    value.toFixed(2);
+  }
+
+  // value: string | number  ← 분기 종료, 다시 원래 union으로
+}
+```
+
+`typeof value === "string"`이 참인 분기에 들어간 시점부터, 컴파일러는 그 블록 안의 `value`를 `string`으로 추적한다. `else`에서는 `string`을 union에서 제거하고 `number`만 남긴다. 분기가 합쳐지면 다시 union으로 복원된다.
+
+**개발자가 직접 좁히는 게 아니라, 컴파일러가 좁힐 수 있는 단서를 코드에 심는 것**이 핵심이다. 그 단서가 다음에 볼 도구들이다.
+
+---
+
+## 좁히기를 트리거하는 도구들
+
+### `typeof` — 원시 타입 판별
+
+```typescript
+function format(value: string | number | boolean) {
+  if (typeof value === "string") return value.toUpperCase();
+  if (typeof value === "number") return value.toFixed(2);
+  return value ? "Y" : "N"; // value: boolean
+}
+```
+
+JS의 `typeof` 연산자 결과 문자열을 그대로 매칭한다. `"string"`, `"number"`, `"boolean"`, `"undefined"`, `"object"`, `"function"`, `"symbol"`, `"bigint"`만 다룬다.
+
+> ⚠️ **`typeof null`은 `"object"`다.**
+> JS의 유서 깊은 동작이다. `null` 체크는 `typeof`로 못 한다. `value !== null`이나 truthy 체크를 써야 한다.
+
+### `instanceof` — 클래스 인스턴스 판별
+
+```typescript
+function handleError(err: Error | string) {
+  if (err instanceof Error) {
+    console.log(err.stack); // err: Error
+  } else {
+    console.log(err);       // err: string
+  }
+}
+```
+
+프로토타입 체인을 거슬러 올라가서 해당 생성자가 있는지 확인한다. 클래스 인스턴스나 내장 객체(`Date`, `Error`, `Array`)를 구분할 때 쓴다.
+
+### `in` — 속성 존재 판별
+
+```typescript
+type Cat = { meow: () => void };
+type Dog = { bark: () => void };
+
+function speak(animal: Cat | Dog) {
+  if ("meow" in animal) {
+    animal.meow(); // animal: Cat
+  } else {
+    animal.bark(); // animal: Dog
+  }
+}
+```
+
+객체의 형태(어떤 속성을 가지는가)로 union을 갈라낼 때 쓴다. 클래스가 아닌 일반 객체 타입에서 가장 자주 쓰이는 도구다.
+
+### 판별 가능한 union (Discriminated Union)
+
+실무에서 가장 많이 쓰는 패턴이다. **모든 멤버가 공통 속성을 가지되 그 값이 리터럴로 다를 때**, 그 속성 하나로 union 멤버를 정확히 구분할 수 있다.
+
+```typescript
+type ApiResponse =
+  | { status: "success"; data: User }
+  | { status: "error"; message: string };
+
+function handle(res: ApiResponse) {
+  if (res.status === "success") {
+    console.log(res.data);    // res.data: User
+  } else {
+    console.log(res.message); // res.message: string
+  }
+}
+```
+
+API 응답, Redux action, 상태 머신 모델링에서 거의 표준처럼 쓰인다. union을 설계할 때 **공통 리터럴 속성을 먼저 두는 습관**을 들여두면 좁히기가 자연스럽게 따라온다.
+
+### 도구 선택의 기준
+
+| 무엇으로 구분하는가 | 쓰는 도구 |
+| --- | --- |
+| 원시 타입 (string, number, …) | `typeof` |
+| 클래스 인스턴스 / 내장 객체 | `instanceof` |
+| 속성 유무 | `in` |
+| 공통 속성의 리터럴 값 | 판별 가능한 union |
+
+---
+
+## 사용자 정의 타입 가드
+
+위 네 가지로 풀리지 않는 판별이 필요할 때, 직접 가드를 만들 수 있다. 리턴 타입을 `boolean`이 아니라 **`x is T` 형태의 타입 술어(type predicate)** 로 적는 게 핵심이다.
+
+자주 사용되는 패턴은 아니지만, 분명 쓰임새가 있는 곳이 있다.
+
+```typescript
+type Fish = { swim: () => void };
+type Bird = { fly: () => void };
+
+function isFish(pet: Fish | Bird): pet is Fish {
+  return (pet as Fish).swim !== undefined;
+}
+
+function move(pet: Fish | Bird) {
+  if (isFish(pet)) pet.swim(); // pet: Fish
+  else pet.fly();              // pet: Bird
+}
+```
+
+`pet is Fish`는 **"이 함수가 `true`를 리턴하면 인자는 `Fish`다"** 라는 약속을 컴파일러에게 새겨주는 시그니처다. 이 약속이 있어야 호출부에서 좁히기가 일어난다.
+
+> ⚠️ **사용자 정의 타입 가드의 정확성은 컴파일러가 검증하지 않는다.**
+> `pet is Fish`라고 적어두고 `pet`에 `Bird`가 들어가거나, `Fish`이지만 `false`가 출력되는 경우는 전적으로 개발자의 책임이라는 얘기다.
+
+### 실제로 어디에 쓰이는가
+
+사용자 정의 가드는 평소 코드에서는 잘 안 보인다. 대부분의 좁히기는 `typeof`/`in`/판별 가능한 union으로 끝난다. 다만 두 영역에서는 분명히 쓰인다.
+
+**1. 라이브러리 코드**
+
+매일 쓰는 `Array.isArray`가 사실 사용자 정의 가드 시그니처를 쓰고 있다.
+
+```typescript
+// lib.es5.d.ts
+interface ArrayConstructor {
+  isArray(arg: any): arg is any[];
+}
+```
+
+React의 `isValidElement`, lodash의 `isString`/`isPlainObject`, zod의 결과 처리 같은 곳도 같은 패턴이다. 이런 표준 도구들이 자연스럽게 동작하는 이유가 여기 있다.
+
+**2. 애플리케이션 코드 — `filter`로 `null` 제거**
+
+이게 일상 코드에서 사용자 정의 가드가 빛나는 거의 유일한 자리다.
+
+```typescript
+const items: (User | null)[] = await fetchUsers();
+
+const filtered = items.filter(item => item !== null);
+// filtered: (User | null)[]  ← 좁혀지지 않음
+
+function isNotNull<T>(value: T | null): value is T {
+  return value !== null;
+}
+const filtered2 = items.filter(isNotNull);
+// filtered2: User[]  ← 좁혀짐
+```
+
+`Array.prototype.filter`의 시그니처가 타입 술어를 받으면 좁혀진 배열을 리턴하도록 오버로딩되어 있다. 인라인 화살표 함수의 리턴은 그냥 `boolean`이라 좁히지 못하지만, `is` 시그니처를 가진 함수를 넘기면 결과 타입이 좁혀진다.
+
+> 📚 [TypeScript 5.5](https://devblogs.microsoft.com/typescript/announcing-typescript-5-5/#inferred-type-predicates)부터는 인라인 화살표 함수의 리턴 타입을 컴파일러가 분석해 자동으로 좁혀준다. 5.5 이상에서는 `items.filter(item => item !== null)`만으로 `User[]`로 좁혀진다.
+
+---
+
+## 타입 단언(`as`)과는 본질이 다르다
+
+좁히기와 가장 자주 헷갈리는 것이 타입 단언이다. 둘은 결과만 비슷해 보일 뿐 동작이 정반대다.
+
+```typescript
+// 타입 좁히기 — 런타임 검증이 코드에 존재
+if (typeof value === "string") {
+  value.toUpperCase();
+}
+
+// 타입 단언 — 검증 없이 "이 타입이라고 가정해라"
+(value as string).toUpperCase();
+```
+
+좁히기는 **컴파일러가 분석한 결과**다. `if` 안에서 `value`가 `string`임이 실제 런타임 코드(`typeof` 비교)로 보장된다.
+
+타입 단언은 **컴파일러를 향한 일방적 선언**이다. 검증이 없으니 런타임에 `value`가 `number`라도 그대로 통과한다. 이 코드는 컴파일은 되지만, `(123 as string).toUpperCase()`처럼 단언이 거짓이면 그대로 터진다.
+
+좁히기는 안전망이 코드 안에 있고, 단언은 안전망이 없다. 단언은 외부 데이터를 다룰 때 마지막 수단으로 써야 하지, 좁히기의 대체재가 아니다.
+
+---
+
+## 좁힘이 풀리는 한 가지 함정
+
+마지막으로 실무에서 한 번씩 부딪히는 동작 하나를 짚고 끝낸다. **객체 속성에 대한 좁힘은 함수 호출이 끼어들면 풀린다.**
+
+```typescript
+type State = { value: string | null };
+
+function example(state: State) {
+  if (state.value !== null) {
+    // state.value: string
+    doSomething();
+    state.value.toUpperCase();
+    //          ^^^^^^^^^^^ Object is possibly 'null'
+  }
+}
+```
+
+`if` 안으로 들어왔을 때 분명히 좁혀졌는데, `doSomething()` 호출 후에는 다시 `string | null`이 된다. 컴파일러가 **"그 함수가 `state.value`를 바꿨을 수 있다"** 고 보수적으로 가정하기 때문이다.
+
+해결은 간단하다. 좁혀진 값을 지역 변수에 담는다.
+
+```typescript
+function example(state: State) {
+  const value = state.value;
+  if (value !== null) {
+    doSomething();
+    value.toUpperCase(); // ✅ value: string, 함수 호출과 무관
+  }
+}
+```
+
+지역 변수는 외부 함수가 건드릴 수 없으니 좁힘이 유지된다. 객체 속성으로 좁힘을 시도하다 막히면 거의 이 패턴으로 풀린다.
+
+---
+
+타입 좁히기의 본질은 단순하다. **컴파일러가 코드 흐름을 따라가면서 union을 분기마다 갈라낸다.** 개발자는 그 갈라냄이 가능하도록 런타임 검사를 적절히 심을 뿐이다.
+
+그래서 좋은 TS 코드는 union을 피하는 게 아니라, **좁히기 좋은 모양으로 union을 설계하는 코드**다. 판별 가능한 union으로 모양을 잡고, 필요한 자리에 정확한 도구를 고르면 그것으로 충분하다.

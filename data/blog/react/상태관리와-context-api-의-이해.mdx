@@ -1,0 +1,605 @@
+---
+title: "상태관리와 Context API 의 이해"
+date: 2025-07-16
+lastmod: 2026-10-31
+summary: "React 프로젝트를 개발하다 보면, 그 규모가 커질수록 상태관리의 필요성을 점점 느낄 수밖에 없게 된다. 여러 컴포넌트에서 사용되는 state일수록 그 프로젝트 구조에 따라 props로 상태를 전달할 때의 depth가 너무 커져서 비효율적인 코드가 되어버리고 만다. "
+tags: ["Context API","React","state management","React의 이해"]
+draft: false
+---
+
+>
+React 프로젝트를 개발하다 보면, 그 규모가 커질수록 **상태관리**의 필요성을 점점 느낄 수밖에 없게 된다. 여러 컴포넌트에서 사용되는 state일수록 그 프로젝트 구조에 따라 props로 상태를 전달할 때의 depth가 너무 커져서 비효율적인 코드가 되어버리고 만다. 실시간으로 변경되는 state의 값까지 다른 컴포넌트와 동기화해 일관된 상태를 유지하기 위해서, **상태관리 도구**가 만들어졌다.
+
+## 1. 상태관리
+
+앞서 짧게 설명했듯이, 상태관리란 상태(`state`) 를 여러 컴포넌트에서 일관된 참조와 변경사항 추적이 가능하도록 하는 작업이다. 
+
+React는 기본적으로 상태를 두 가지 구분할 수 있는데, **로컬 상태** 와 **전역 상태**이다.
+
+### 로컬 상태
+
+로컬 상태는 상태를 선언한 환경에서만 사용 가능한 상태이다. 한 컴포넌트에서만 사용되는 상태 이에 해당한다.
+
+```jsx
+function Counter() {
+  const [count, setCount] = useState(0);
+  
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={() => setCount(count + 1)}>증가</button>
+    </div>
+  );
+}
+```
+
+### 전역 상태
+
+전역 상태는 이름 그대로 전역에서 상태가 필요한 경우에 사용된다. 선언 방식에 차이가 있는 것은 아니고, 일반적으로 상위 파일에 상태를 선언하고 하위 파일에 `Props Drilling` 으로 전달하는 방식이 사용된다.
+
+```jsx
+// Props Drilling 문제
+function App() {
+  const [theme, setTheme] = useState('light');
+  
+  return (
+    <Layout theme={theme} setTheme={setTheme}>
+      <Header theme={theme} setTheme={setTheme} />
+      <Main theme={theme} setTheme={setTheme} />
+    </Layout>
+  );
+}
+```
+
+### 상태관리가 필요한 이유?
+
+상태관리를 하지 않는다면, 여러 곳에서 같은 상태를 사용하기 위해 모두 `props` 로 직접 전달해주어야 한다. 한 두 단계의 전달은 이 방식이 편리할 수 있으나, 사용처가 많아질수록 `props`가 너무 복잡해져서 가독성을 해치기 쉽다.
+
+```jsx
+// 상태관리 없이 props만 사용하는 경우
+function App() {
+  const [user, setUser] = useState({ name: 'John', isLoggedIn: true });
+  
+  return (
+    <div>
+      <Header user={user} setUser={setUser} />
+      <Main user={user} setUser={setUser} />
+      <Sidebar user={user} setUser={setUser} />
+      <Footer user={user} setUser={setUser} />
+    </div>
+  );
+}
+```
+
+## 2. Context API 의 등장 배경
+
+상태관리는 기본적으로 전역 상태를 위해 고안된 개념이다. 위에서 확인해 본 것처럼 상태를 전역에서 사용하기 위해선 해당 상태를 일일이 `Props Drilling` 으로 전달해주어야 하는데, 이게 파일이 커질수록 복잡해지고 관리도 어렵다.
+
+**Context API**는 이런 `Props Drilling` 의 불편함을 해소하기 위해 개발된 기능이다.
+
+### Context란?
+
+Context란 직역하면 문맥, 맥락 등의 의미로 사용되지만, 프로그래밍에선 **어떠한 데이터의 호출, 응답 간의 환경 정보** 정도로 이해할 수 있다.
+
+React에서 Context는 컴포넌트 간에 데이터를 공유할 수 있도록 해주는 기능이다. 여기서의 데이터는 일반적으로 **상태**들이 해당한다.
+
+### Context API의 목적
+
+1. `Props Drilling` 의 불편함 해소
+2. 효율적인 전역 상태관
+3. React에서 내장 상태관리 솔루션의 제공
+
+그렇다면 다음은 `Context API` 가 어떻게 동작하고, 어떻게 사용할 수 있는지 알아보자.
+
+## 3. Context API 의 동작원리
+
+### 1) Context 생성과 Provider
+
+```jsx
+// 1. Context 생성
+const ThemeContext = createContext();
+
+// 2. Provider 컴포넌트
+export function ThemeProvider({ children }) {
+  const [theme, setTheme] = useState('light');
+  
+  return (
+    <ThemeContext.Provider value={{ theme, setTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
+// 3. Custom Hook
+export function useTheme() {
+  const context = useContext(ThemeContext);
+  if (!context) {
+    throw new Error('useTheme must be used within a ThemeProvider');
+  }
+  return context;
+}
+```
+
+위 코드는 `Context API` 를 적용해 전역 상태 관리를 구현한 코드이다.
+
+#### 1. Context 생성
+- `createContext()` 는 React 내장함수로, 새로운 Context 객체를 생성한다.
+- `ThemeContext` 는 `createContext()` 의 반환값으로 두 가지 주요 속성을 가진다.
+  - `Provider` : Context 값을 제공하는 컴포넌트
+  - `Consumer`: Context 값을 소비하는 컴포넌트
+
+#### 2. Provider 컴포넌트 생성
+- `ThemeProvider` 는 Context 값을 관리하고 제공하는 컴포넌트이다.
+- `useState`를 사용해 테마 상태를 로컬에서 관리한다.
+- `ThemeContext.Provider`에 `value` prop으로 상태와 상태 변경 함수를 전달한다.
+
+>
+Provider의 역할
+>
+1. 상태관리: Context에서 공유할 상태를 관리
+2. 값 제공: 하위 컴포넌트들에게 context 값을 제공
+3. 업데이트 트리거: 상태 변경 시 구독자들에게 알림
+>
+구독자 : Provider의 하위 요소 중 해당 Context를 사용하는 컴포넌트(예시에서 useTheme를 사용하는 컴포넌트)
+
+
+#### 3. Custom Hook 생성
+- `useTheme`은 Context 값을 쉽게 사용할 수 있도록 만든 Custom Hook이다.
+- `useContext`를 사용하여 Context 값을 가져온다.
+- 에러 처리를 통해 Provider 밖에서 사용할 때 명확한 에러 메시지를 제공한다.
+
+### 2) Context의 내부 동작 과정
+
+앞서 Context API를 사용하는 방법에 대해 알아봤다면, 이번엔 Context API가 어떻게 동작하는지 React 내부에서 일어나는 일을 의사 코드로 살펴보자.
+
+```javascript
+// createContext의 내부 동작 (의사 코드)
+function createContext(defaultValue) {
+  const context = {
+    _currentValue: defaultValue,  // 현재 Context 값
+    _consumers: new Set(),        // 이 Context를 구독하는 컴포넌트들
+    
+    Provider: function Provider({ value, children }) {
+      // Provider 컴포넌트 로직
+    },
+    
+    Consumer: function Consumer({ children }) {
+      // Consumer 컴포넌트 로직
+    }
+  };
+  
+  return context;
+}
+```
+
+#### Provider의 내부 동작
+```javascript
+// Provider의 내부 동작 과정
+function ThemeProvider({ children }) {
+  // 1. 상태 초기화
+  const [theme, setTheme] = useState('light');
+  
+  // 2. Context 값 객체 생성
+  const contextValue = {
+    theme: theme,        // 현재 테마 값
+    setTheme: setTheme   // 테마 변경 함수
+  };
+  
+  // 3. Provider 렌더링
+  return (
+    <ThemeContext.Provider value={contextValue}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+```
+
+#### useContext의 내부 동작
+```javascript
+// useContext의 내부 동작 (의사 코드)
+function useContext(context) {
+  // 1. 현재 컴포넌트가 Context의 구독자로 등록
+  const component = getCurrentComponent();
+  context._consumers.add(component);
+  
+  // 2. Context의 현재 값 반환
+  return context._currentValue;
+}
+```
+
+### 3) 상태 업데이트와 구독자 알림
+
+Context 값이 변경될 때 구독자들에게 알림이 가고, 알림이 오면 해당 구독자들은 상태 업데이트에 따라 컴포넌트를 재랜더링한다.
+
+```javascript
+// Context 내부에서 일어나는 일 (의사 코드)
+class Context {
+  _currentValue = null;
+  _consumers = new Set(); // 구독자 목록
+  
+  Provider = ({ value, children }) => {
+    // 값이 변경되었는지 확인
+    if (this._currentValue !== value) {
+      this._currentValue = value; // 새 값으로 업데이트
+      
+      // 모든 구독자들에게 변경 알림
+      this._consumers.forEach(consumer => {
+        consumer.forceUpdate(); // 컴포넌트 리렌더링 트리거
+      });
+    }
+    
+    return children;
+  }
+}
+```
+
+## 4. Context API 사용 패턴
+
+Context API를 사용하는 대표적인 경우 중 하나는 위 예시처럼 사이트 테마 상태이다. 테마는 페이지 전체에 영향을 미치기 때문에, 일반적으로 프로젝트 루트 파일의 최상위 요소에 `ThemeProvider`가 위치하게 된다.
+
+### 1) 기본 사용법
+
+```jsx
+// App.js
+function App() {
+  return (
+    <ThemeProvider>
+      <Header />
+      <Main />
+      <Footer />
+    </ThemeProvider>
+  );
+}
+
+// Header.js
+function Header() {
+  const { theme, setTheme } = useTheme();
+  
+  return (
+    <header className={`theme-${theme}`}>
+      <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+        테마 변경
+      </button>
+    </header>
+  );
+}
+```
+
+### 2) 여러 Context 조합
+
+복잡한 애플리케이션에서는 여러 Context를 조합해서 사용할 수 있다.
+
+```jsx
+// 복합 Provider 패턴
+function AppProviders({ children }) {
+  return (
+    <ThemeProvider>
+      <UserProvider>
+        <LanguageProvider>
+          {children}
+        </LanguageProvider>
+      </UserProvider>
+    </ThemeProvider>
+  );
+}
+
+// 사용
+function App() {
+  return (
+    <AppProviders>
+      <Header />
+      <Main />
+      <Footer />
+    </AppProviders>
+  );
+}
+```
+
+### 3) Context 분할 패턴
+
+반대로, 컨텍스트가 너무 많거나 다양한 책임이 집중된다면 Context를 분리해서 단일 책임을 준수하도록 설계할 수도 있다.
+
+```jsx
+// 상태와 액션을 분리한 Context
+const UserStateContext = createContext();
+const UserActionsContext = createContext();
+
+function UserProvider({ children }) {
+  const [user, setUser] = useState(null);
+  
+  const actions = useMemo(() => ({
+    login: (userData) => setUser(userData),
+    logout: () => setUser(null),
+    updateProfile: (updates) => setUser(prev => ({ ...prev, ...updates }))
+  }), []);
+  
+  return (
+    <UserStateContext.Provider value={user}>
+      <UserActionsContext.Provider value={actions}>
+        {children}
+      </UserActionsContext.Provider>
+    </UserStateContext.Provider>
+  );
+}
+
+// Custom Hooks
+export function useUserState() {
+  const context = useContext(UserStateContext);
+  if (context === undefined) {
+    throw new Error('useUserState must be used within a UserProvider');
+  }
+  return context;
+}
+
+export function useUserActions() {
+  const context = useContext(UserActionsContext);
+  if (context === undefined) {
+    throw new Error('useUserActions must be used within a UserProvider');
+  }
+  return context;
+}
+```
+
+---
+
+## 5. Context API의 성능 최적화
+
+### 1) 불필요한 리렌더링 방지
+
+앞서 Context 값이 변경되면 구독자들에게 상태 업데이트에 대한 알림이 전달되고, 재랜더링이 실행된다고 했다. 그 중에선 재랜더링이 불필요한 상태 업데이트가 있을 수도 있고, 관련 없는 구독자 또한 재랜더링이 되는 것은 비효율적이다.
+
+때문에 Context 값이 변경될 때마다 모든 구독자가 리렌더링되지 않도록 하는 해결 방법을 알아두어야 한다.
+
+#### 메모이제이션을 통한 최적화
+```jsx
+// 문제가 있는 코드
+function UserProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(false);
+  
+  // user가 변경될 때마다 모든 자식이 리렌더링됨
+  return (
+    <UserContext.Provider value={{ user, setUser, loading, setLoading }}>
+      {children}
+    </UserContext.Provider>
+  );
+}
+
+// 최적화된 코드
+function UserProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(false);
+  
+  // 메모이제이션을 통한 불필요한 리렌더링 방지
+  const value = useMemo(() => ({
+    user,
+    setUser,
+    loading,
+    setLoading
+  }), [user, loading]);
+  
+  return (
+    <UserContext.Provider value={value}>
+      {children}
+    </UserContext.Provider>
+  );
+}
+```
+
+#### React.memo를 사용한 컴포넌트 최적화
+```jsx
+// Context를 사용하지 않는 컴포넌트 최적화
+const ExpensiveComponent = React.memo(function ExpensiveComponent() {
+  // 이 컴포넌트는 Context를 사용하지 않으므로
+  // Context 값이 변경되어도 재렌더링되지 않음
+  return <div>{/* 복잡한 UI */}</div>;
+});
+
+// Context를 사용하는 컴포넌트 최적화
+const Header = React.memo(function Header() {
+  const { theme } = useTheme();
+  
+  return (
+    <header className={`theme-${theme}`}>
+      Header
+    </header>
+  );
+});
+```
+
+### 2) Context 분할을 통한 최적화
+
+관심사를 분리하여 필요한 부분만 리렌더링되도록 한다.
+
+```jsx
+// 사용자 정보와 설정을 분리
+const UserInfoContext = createContext();
+const UserSettingsContext = createContext();
+
+// Context가 분리되어 각 커스텀 훅을 사용하는 컴포넌트만 각각 리렌더링.
+function UserProvider({ children }) {
+  const [userInfo, setUserInfo] = useState(null);
+  const [userSettings, setUserSettings] = useState({});
+  
+  return (
+    <UserInfoContext.Provider value={{ userInfo, setUserInfo }}>
+      <UserSettingsContext.Provider value={{ userSettings, setUserSettings }}>
+        {children}
+      </UserSettingsContext.Provider>
+    </UserInfoContext.Provider>
+  );
+}
+
+// 사용 예시
+function Profile() {
+  const { userInfo } = useUserInfo(); // userInfo만 필요
+  return <div>{userInfo?.name}</div>;
+}
+
+function Settings() {
+  const { userSettings } = useUserSettings(); // userSettings만 필요
+  return <div>{/* 설정 UI */}</div>;
+}
+```
+
+---
+
+## 6. Context API의 한계와 주의사항
+
+Context API는 처음 출시되고 나서는 React 상태관리의 핵심으로 쓰였지만, 여러가지 문제가 많았다. 앞서 최적화를 했던 부분이 그 주된 원인이지만, 그 밖에 설계가 복잡하다는 이유 등도 있다.
+
+### 1) 성능 문제
+
+Context API의 가장 큰 문제점 중 하나는 성능과 관련된 이슈이다. Context 값이 변경될 때마다 해당 Context를 구독하는 모든 컴포넌트가 재렌더링되기 때문에, 불필요한 리렌더링이 발생할 수 있다.
+
+#### 불필요한 리렌더링 문제
+
+```jsx
+// Context 값이 변경되면 모든 Consumer가 리렌더링됨
+function ExpensiveComponent() {
+  const { theme } = useTheme(); // theme이 변경되면 이 컴포넌트도 리렌더링
+  
+  // 무거운 계산이나 렌더링
+  return <div>{/* 복잡한 UI */}</div>;
+}
+```
+
+### 2) 복잡한 상태 로직의 한계
+
+Context API는 간단한 상태 관리에는 적합하지만, 복잡한 상태 로직이나 비동기 처리가 많은 경우에는 한계를 보인다. 특히 상태 업데이트 로직이 복잡해지거나, 여러 상태 간의 의존성이 있는 경우 관리가 어려워진다.
+
+#### 복잡한 상태 로직 예시
+
+```jsx
+// 복잡한 상태 로직의 예시
+function ComplexProvider({ children }) {
+  const [state, setState] = useState(initialState);
+  
+  // 복잡한 상태 업데이트 로직
+  const updateState = useCallback((action) => {
+    switch (action.type) {
+      case 'ADD_TODO':
+        setState(prev => ({
+          ...prev,
+          todos: [...prev.todos, action.payload]
+        }));
+        break;
+      case 'TOGGLE_TODO':
+        setState(prev => ({
+          ...prev,
+          todos: prev.todos.map(todo =>
+            todo.id === action.payload
+              ? { ...todo, completed: !todo.completed }
+              : todo
+          )
+        }));
+        break;
+      // ... 더 많은 케이스들
+    }
+  }, []);
+  
+  // 이런 복잡한 로직은 Redux나 Zustand 같은 도구가 더 적합할 수 있음
+}
+```
+
+### 3) 디버깅의 어려움
+
+Context API는 React의 내장 기능이기 때문에 별도의 개발자 도구나 디버깅 기능이 제한적이다. 특히 상태 변화의 원인을 추적하거나, 상태 변화의 흐름을 파악하기가 어려워 디버깅에 많은 시간이 소요될 수 있다.
+
+#### 상태 변화 추적의 어려움
+
+```jsx
+// 디버깅이 어려운 예시
+function UserProvider({ children }) {
+  const [user, setUser] = useState(null);
+  
+  // 언제 user가 변경되는지 추적하기 어려움
+  const login = useCallback((userData) => {
+    setUser(userData); // 이 변경이 어디서 왔는지 추적 어려움
+  }, []);
+  
+  const logout = useCallback(() => {
+    setUser(null); // 어떤 컴포넌트에서 호출되었는지 알기 어려움
+  }, []);
+  
+  return (
+    <UserContext.Provider value={{ user, login, logout }}>
+      {children}
+    </UserContext.Provider>
+  );
+}
+```
+
+위 코드에서 `user` 상태가 언제, 어디서, 왜 변경되는지 추적하기가 어렵다. 여러 컴포넌트에서 `login`이나 `logout` 함수를 호출할 수 있기 때문에, 상태 변화의 원인을 파악하기 위해서는 모든 사용처를 일일이 확인해야 한다.
+
+---
+
+## 7. Context API vs 다른 상태관리 라이브러리
+
+### 1) 비교표
+
+React 생태계에는 Context API 외에도 다양한 상태관리 라이브러리들이 존재한다. 각각의 특징과 장단점을 비교해보면 프로젝트에 적합한 도구를 선택할 수 있다.
+
+| 특징 | Context API | Redux | Zustand | Recoil |
+|------|-------------|-------|---------|--------|
+| 번들 크기 | 0KB | ~2KB | ~1KB | ~13KB |
+| 보일러플레이트 | 적음 | 많음 | 적음 | 적음 |
+| 학습 곡선 | 낮음 | 높음 | 낮음 | 중간 |
+| 개발자 도구 | 제한적 | 우수 | 보통 | 우수 |
+| 미들웨어 | 없음 | 풍부 | 제한적 | 없음 |
+| 성능 | 보통 | 좋음 | 좋음 | 좋음 |
+
+### 2) 언제 Context API를 사용할까?
+
+상태관리 도구를 선택할 때는 프로젝트의 규모, 복잡도, 팀의 경험 등을 종합적으로 고려해야 한다. Context API는 모든 상황에 적합하지 않으며, 특정 상황에서만 사용하는 것이 좋다.
+
+#### 사용하기 좋은 경우:
+- 간단한 전역 상태 관리
+- React 내장 기능만 사용하고 싶을 때
+- 작은~중간 규모의 애플리케이션
+- 빠른 프로토타이핑
+
+#### 사용하지 말아야 할 경우:
+- 복잡한 상태 로직
+- 높은 빈도의 상태 업데이트
+- 대규모 애플리케이션
+- 성능이 중요한 경우
+
+---
+
+## 8. Context API 의 장단점
+
+### 1) Context API 사용 시 체크리스트
+
+Context API를 사용할 때는 몇 가지 중요한 점들을 고려해야 한다. 다음 체크리스트를 통해 Context API가 프로젝트에 적합한지, 그리고 올바르게 구현되었는지 확인할 수 있다.
+
+- [ ] 정말 전역 상태가 필요한가?
+- [ ] Context를 적절히 분할했는가?
+- [ ] 성능 최적화를 적용했는가?
+- [ ] 에러 경계를 설정했는가?
+- [ ] 적절한 에러 처리를 했는가?
+
+
+### 2) Context API의 장단점
+
+#### 장점:
+- **React 내장 기능**: 추가 라이브러리 불필요
+- **간단한 설정**: 복잡한 보일러플레이트 없음
+- **Props Drilling 해결**: 깊은 컴포넌트 트리에서 props 전달 불필요
+- **학습 곡선 낮음**: React 기본 개념만 알면 사용 가능
+
+#### 단점:
+- **성능 문제**: Context 값 변경 시 모든 Consumer가 리렌더링
+- **복잡한 상태 관리**: 복잡한 상태 로직에는 부적합
+- **디버깅 어려움**: 상태 변화 추적이 어려움
+- **보일러플레이트**: Provider와 Custom Hook 설정 필요
+
+---
+
+## 9. 정리
+
+Context API는 React에서 제공하는 강력한 전역 상태관리 도구이다. `Props Drilling` 문제를 해결하고, 간단한 전역 상태 관리에 매우 유용하다.
+
+하지만 Context API는 만능 해결책이 아니며, 프로젝트의 규모와 복잡도에 따라 다른 상태관리 라이브러리를 고려해야 한다. 작은~중간 규모의 프로젝트에서는 Context API가 충분하지만, 대규모 프로젝트나 복잡한 상태 로직이 필요한 경우에는 Redux, Zustand, Recoil 등의 도구를 고려해보는 것이 좋다.
+
+Context API의 동작 원리를 이해하고, 적절한 성능 최적화를 적용하며, 프로젝트에 맞는 상태관리 전략을 선택하는 것이 중요하다.

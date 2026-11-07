@@ -1,0 +1,109 @@
+---
+title: "[SlateKR #040] 종목 상세 페이지의 탭 구조 — Parallel Routes로 결정한 이유"
+date: 2026-05-26
+lastmod: 2026-10-31
+summary: "이번 작업부터 종목 상세 페이지를 재설계하는 트랙으로 넘어왔다. 데이터 정확성 트랙이 어느 정도 자리 잡았으니, 이제 UI 차례다.목표는 네이버 증권 같은 탭 구조다. 상단에 종목명·가격·핵심 지표 같은 고정 영역을 두고, 하단은 종합정보·차트·재무·공시 같은 탭으로 "
+tags: ["Parallel Routes","app router","next.js","react-cache","SlateKR"]
+draft: false
+---
+
+이번 작업부터 종목 상세 페이지를 재설계하는 트랙으로 넘어왔다. 데이터 정확성 트랙이 어느 정도 자리 잡았으니, 이제 UI 차례다.
+
+목표는 네이버 증권 같은 탭 구조다. 상단에 종목명·가격·핵심 지표 같은 고정 영역을 두고, 하단은 종합정보·차트·재무·공시 같은 탭으로 전환된다. 지금처럼 모든 섹션이 세로로 쭉 늘어선 구조는 정보가 늘어날수록 한 화면이 무거워지는데, 탭으로 나눠두면 사용자가 보고 싶은 영역만 볼 수 있게 된다.
+
+UI를 손대기 전에, 어떤 구조로 구현할지부터 정해야 했다.
+
+---
+
+## 세 가지 노선
+
+Next.js App Router에서 탭을 구현하는 방법은 크게 셋이다.
+
+- **SSR + 클라이언트 토글** — 한 페이지에 모든 섹션을 렌더하고 클라이언트 상태로 탭 전환
+- **라우트 분리** — `/stocks/[ticker]/financials` 같은 별도 라우트로 분리
+- **Parallel Routes** — `@chart`, `@financials` 같은 named slot으로 같은 layout 안에서 슬롯만 전환
+
+겉으로는 비슷한 UX지만, 캐싱·실패 격리·코드 분할·URL 동작이 갈린다.
+
+라우트 분리는 매 전환마다 페이지가 통째로 교체된다. 고정 영역(Header, Metrics)을 매번 다시 렌더할 이유가 없는데도 다시 그려지고, 다른 탭에서 보고 있던 상태도 같이 날아간다. 거기서 빠졌다.
+SEO 분리 가치도 종목 단위 검색만 의미가 있다고 봤다. "삼성전자 재무"를 검색해서 재무 탭에 직접 들어오는 수요는 거의 없을 거다.
+
+남는 건 SSR + 클라이언트 토글과 Parallel Routes 둘이었다.
+
+---
+
+## Parallel Routes로 결정한 이유
+
+지금의 상세 페이지는 Server Component + Suspense로 5개 섹션을 격리해서 작성돼 있다. Header, Metrics, Chart, Financials, Disclosures가 각자 독립된 Suspense 경계 안에서 스트리밍된다. 한 섹션이 느려도 다른 섹션 렌더를 막지 않고, DART API가 죽어도 페이지 전체가 죽지 않는다.
+
+클라이언트 토글로 가면 이 격리 구조를 클라이언트 상태로 옮겨야 했다. Suspense 격리가 무의미해진다. 첫 진입에 모든 탭 데이터를 들고 와야 즉각 전환이 되니까 HTML이 무거워지고, Next.js를 쓸 이유가 흐려진다.
+
+Parallel Routes는 반대였다. 이미 가지고 있던 섹션 격리를 라우트 레벨로 끌어올리는 모양이다. 슬롯별 default.tsx, loading.tsx, error.tsx로 격리가 라우트 레벨에서 보장되고, 활성 슬롯의 URL은 바뀌어도 다른 슬롯들의 상태는 그대로 유지된다. 다른 탭은 Link prefetch로 자연스럽게 백그라운드 로딩된다.
+
+탭 구성은 이렇게 잡았다.
+
+```
+고정 영역 (layout):
+  - StockHeader
+  - StockMetrics
+
+탭 슬롯:
+  @overview     — 약식 차트 + 최근 공시 + 기타 정보
+  @chart        — 전체 차트 + 기간 선택
+  @financials   — 재무 슬레이트
+  @disclosures  — 공시 슬레이트
+```
+
+라우트 분리와 비슷해 보이지만 차이가 있다. 라우트 분리는 페이지가 통째로 교체되어 고정 영역까지 다시 렌더되고, 다른 영역의 상태가 보존되지 않는다. Parallel Routes는 활성 슬롯만 갈아끼우고 layout과 비활성 슬롯의 상태는 유지한다.
+
+---
+
+## 기존 패턴의 약점들
+
+결정 근거가 "이미 가진 격리 패턴의 자연스러운 확장"이었기 때문에, 그 격리 패턴 자체가 합리적이어야 결정도 합리적이다. 그래서 현재 구조가 안정적이며 합리적인지를 먼저 점검했다.
+
+그 과정에서, 몇 가지 보완이 필요한 부분을 발견했다.
+
+**`getLatestPrice`가 한 요청 안에서 3번 호출되고 있었다.** `getStockByTicker` 내부에서 한 번, `StockMetrics`에서 한 번, `StockHeader`의 `getDailyPrices(2)` 첫 row가 같은 데이터를 또 한 번. `React.cache`가 `getStockByTicker`에만 걸려 있어서 나머지는 그대로 DB 왕복으로 나가고 있었다.
+
+**`StockMetrics`는 `Promise.all`로 가격과 재무를 가져왔다.** 한쪽만 실패해도 catch에서 양쪽을 다 버린다. EPS와 BPS는 가격 없이도 표시할 수 있는데, 그 경로에 도달하지 못하고 있었다. 섹션을 격리했다고 해놓고 섹션 안에서 부분 실패 격리가 안 되고 있던 거다.
+
+**`page.tsx`에 `revalidate = 3600`이 박혀 있는데 lib 함수에는 자체 캐싱이 없었다.** 이전에 설정했던 차등 캐시 정책이 코드 반영돼 있지 않았다. 그 외에 `lightweight-charts` 정적 import, 차트 LIMIT 365 vs 표시 "최근 1년" 불일치 같은 잔잔한 항목도 같이 나왔다. 이건 기억에 있는데, 바로 고쳐야지 하고 잊어버린 것들이다.
+
+전부 한 세션에 잡으면 디버깅 지옥이 될 게 뻔했다. 시점을 나눴다.
+
+- **#040 (이번)** — `getLatestPrice` 중복 제거, `StockMetrics` 부분 실패 격리
+- **#041 (다음)** — Parallel Routes 본 적용 + `lightweight-charts` 동적 import + 차트 LIMIT 정리
+- **별도 트랙** — Next.js 16 `'use cache'` 캐싱 마이그레이션
+
+마지막 항목은 좀 사정이 있다. Next.js가 16.2.2였는데 `next.config.ts`에서 `cacheComponents` flag를 활성화 시키지 않아 캐싱은 15 호환 모드로 동작 중이었다. 단순히 lib 함수에 캐싱 래퍼 하나 추가하는 문제가 아니라 패러다임 전환이 필요해서 별도 트랙으로 미뤘다.
+
+---
+
+## 사전 정비
+
+이번 세션에서 실제로 손댄 건 두 군데였다.
+
+`lib/prices.ts`의 `getLatestPrice`를 `React.cache`로 감쌌다. 요청 단위 메모이즈라서 같은 요청 안에서는 DB 왕복이 한 번만 나간다.
+
+`StockMetrics`는 `Promise.allSettled`로 전환하고, 지표별로 데이터 가용성을 분리해서 판단하게 했다. EPS와 BPS는 `financial`만 있으면 표시, PER과 PBR은 둘 다 있을 때만. 한쪽이 없으면 해당 셀만 "—"로 두고 나머지는 살린다. 메시지도 세 갈래로 분기했다 — 에러, 빈 데이터, 부분 데이터.
+
+코드 변경 자체는 작았는데, 작업 전 의사결정이 더 컸던 작업이었다.
+
+---
+
+## 정리
+
+- 탭 구조의 구현 노선은 Parallel Routes로 결정. 현재 Suspense 기반 섹션 격리를 라우트 레벨로 끌어올리는 자연스러운 확장이다.
+- 결정 근거를 검증하다 격리 패턴의 약점이 몇 가지 드러났다. 그중 단순한 둘(`React.cache` 적용, `Promise.allSettled` 전환)은 이번에 정리했다.
+- 나머지는 본 적용(#041)이나 별도 트랙(캐싱 마이그레이션)에서 다룬다.
+
+다음 세션에선 styleguide에 탭 레이아웃 패턴부터 만들고, 본 페이지에 Parallel Routes를 적용한다. 슬롯이 자리 잡아야 그제야 차등 캐싱 같은 후속 작업을 따로 떼서 진행할 수 있다.
+
+---
+
+## 다음 작업
+
+- 트랙 C — styleguide Layout Patterns + 종목 상세 본 페이지 Parallel Routes 적용
+- 트랙 C — `lightweight-charts` 동적 import (슬롯 분리와 함께)
+- 트랙 F7 — Next.js 16 `'use cache'` 마이그레이션 (MVP+)

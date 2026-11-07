@@ -1,0 +1,221 @@
+---
+title: "[TypeScript] 제네릭 — FE 개념 탐구 #034"
+date: 2026-05-07
+lastmod: 2026-11-03
+summary: "💡 핵심 요약제네릭은 타입을 매개변수로 받아 타입들 사이의 관계를 보존하는 도구다.any처럼 타입을 포기하는 게 아니라, 입력 타입과 출력 타입의 관계를 함수가 통과한 뒤에도 살려둔다.타입 매개변수에 extends로 제약을 걸면, 그 타입에 대해 무엇을 보장할 수 있"
+tags: ["Generics","frontend","typescript","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- 제네릭은 타입을 매개변수로 받아 **타입들 사이의 관계를 보존**하는 도구다.
+- `any`처럼 타입을 포기하는 게 아니라, 입력 타입과 출력 타입의 관계를 함수가 통과한 뒤에도 살려둔다.
+- 타입 매개변수에 `extends`로 제약을 걸면, 그 타입에 대해 무엇을 보장할 수 있는지를 명시할 수 있다.
+
+---
+
+## 제네릭이 필요한 경우
+
+배열의 첫 요소를 반환하는 함수를 만든다고 해보자.
+
+```ts
+function first(arr: number[]): number {
+  return arr[0];
+}
+```
+
+이 함수는 `number[]`에만 동작한다. 문자열 배열에는 못 쓴다. 그렇다고 타입마다 함수를 따로 만들 수는 없다.
+
+그럼 `any`로 받으면 어떨까?
+
+```ts
+function first(arr: any[]): any {
+  return arr[0];
+}
+
+const x = first([1, 2, 3]); // x: any
+x.toUpperCase();             // 컴파일러가 막지 않음
+```
+
+동작은 한다. 그런데 반환값이 `any`다.
+입력은 분명히 `number[]`였는데, 함수를 통과하는 순간 **타입 정보가 끊긴다.**
+
+여기서 `unknown`을 써도 마찬가지다. 입력의 타입 정보와 출력의 타입 정보가 연결되지 않으면, TS의 "컴파일 타임 정적 타입 검사"의 의미가 무너진다.
+
+---
+
+## 제네릭의 핵심: 타입을 매개변수로 받는다
+
+함수가 값을 매개변수로 받듯, 제네릭은 **타입을 매개변수로 받는다.**
+
+```ts
+function first<T>(arr: T[]): T {
+  return arr[0];
+}
+
+const a = first([1, 2, 3]);    // a: number
+const b = first(["x", "y"]);    // b: string
+```
+
+`<T>`는 "이 함수가 호출될 때 결정될 어떤 타입"을 가리키는 자리표시자다.
+호출 시 인자 `[1, 2, 3]`을 보고 컴파일러가 `T = number`로 추론한다.
+그 결과 반환 타입도 `number`로 확정된다.
+
+핵심은 한 가지다.
+
+> 제네릭은 **타입들 사이의 관계**를 표현한다.
+
+`any`는 "타입을 모르겠다"는 선언이고, 제네릭은 "타입은 모르지만 입력과 출력은 같다"는 선언이다. 모르는 건 똑같지만, **관계가 보존되는지가 다르다.**
+
+---
+
+## 동작 원리
+
+### 추론은 컴파일 타임에 일어난다
+
+타입 매개변수는 런타임에 존재하지 않는다. JavaScript로 컴파일되면 `<T>`는 흔적도 없이 사라진다. `T` 다른 타입과 동일하게, 오직 컴파일러가 타입을 검사하는 동안에만 의미를 갖는 **타입 수준의 변수**다.
+
+```ts
+identity(42);             // T = number로 추론
+identity<string>("hello"); // 명시적으로 지정도 가능
+```
+
+명시적으로 지정할 수도 있지만, 대부분은 인자에서 자동으로 추론된다.
+
+### 타입 매개변수가 여러 개일 때
+
+타입 사이의 관계가 여러 곳에 걸쳐 있을 때 제네릭의 위력이 드러난다.
+
+```ts
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+const user = { name: "Alice", age: 30 };
+const name = getProperty(user, "name"); // string
+const age = getProperty(user, "age");   // number
+const x = getProperty(user, "email");   // 컴파일 에러
+```
+
+`T`는 객체 타입, `K`는 그 객체의 키 중 하나, 반환 타입은 `T[K]` — **그 키에 해당하는 값의 타입**이다.
+`T`, `K`, `T[K]` 세 타입이 함수 시그니처 안에서 관계로 묶여 있다.
+
+이 관계를 `any`로는 표현할 수 없다.
+[#032에서 다룬](https://velog.io/@dh82680/TypeScript-구조적-타이핑-FE-개념-탐구-032) 구조적 타이핑이 "같은 모양인지"를 비교하는 정적 검사라면, 제네릭은 "타입 사이의 관계 자체"를 함수 시그니처에 새겨두는 도구다.
+
+---
+
+## extends — 제약이 필요한 이유
+
+제네릭의 `T`는 기본적으로 "어떤 타입이든 들어올 수 있다"고 가정한다.
+그래서 `T`에 대해 **어떤 동작도 보장할 수 없다.**
+
+```ts
+function logLength<T>(value: T) {
+  console.log(value.length); // 에러: T에 length가 있는지 알 수 없음
+}
+```
+
+이때 `extends`로 "이 타입은 최소한 이런 모양이어야 한다"를 명시한다.
+
+```ts
+function logLength<T extends { length: number }>(value: T): T {
+  console.log(value.length);
+  return value;
+}
+
+logLength("hello");        // OK
+logLength([1, 2, 3]);      // OK
+logLength(42);             // 에러
+```
+
+"그냥 `value: { length: number }`로 받으면 안 되나?"라는 질문이 자연스럽다.
+그렇게 받으면 입력 타입 정보가 손실된다.
+
+```ts
+// 제네릭 없이
+function logLength(value: { length: number }): { length: number } {
+  return value;
+}
+
+const arr = logLength([1, 2, 3]);
+arr.push(4); // 에러 — push가 없다고 함
+```
+
+반환 타입이 `{ length: number }`로 깎이면서 "이건 배열이다"라는 정보가 사라졌다.
+제네릭으로 받으면 **원본 타입이 그대로 살아남는다.**
+
+```ts
+function logLength<T extends { length: number }>(value: T): T {
+  return value;
+}
+
+const arr = logLength([1, 2, 3]); // T = number[]
+arr.push(4); // OK
+```
+
+> 💡 **`extends`는 "최소한의 모양"을 명시한다.**
+> 그 모양 위에서 구체적 타입은 그대로 보존된다. 이게 제네릭이 타입을 좁히지 않으면서도 동작을 보장할 수 있는 이유다.
+
+---
+
+## React에서 가장 흔히 만나는 제네릭
+
+`useState`의 시그니처는 대략 이렇다.
+
+```ts
+function useState<S>(initial: S): [S, (value: S) => void];
+```
+
+```ts
+const [count, setCount] = useState(0);            // S = number로 추론
+const [user, setUser] = useState<User | null>(null); // 명시적 지정
+```
+
+초기값이 `null`이면 추론으로는 `S = null`이 되어 다른 타입을 담을 수 없다.
+이런 경우 `<User | null>`로 직접 지정해서 컴파일러가 추론할 수 없는 관계를 보충한다.
+
+`Array<T>`, `Promise<T>`, `Map<K, V>`도 모두 같은 원리다.
+"어떤 컨테이너인지"는 정해져 있고, "그 안에 무엇이 담기는지"만 매개변수로 받는다.
+
+---
+
+## 헷갈리기 쉬운 지점
+
+**제네릭은 `any`의 대체재가 아니다.**
+
+```ts
+function logValue<T>(value: T): void {
+  console.log(value);
+}
+```
+
+이 함수에서 `T`는 아무 역할도 하지 않는다. 입력 타입과 출력 타입 사이에 관계가 없으면 제네릭을 쓸 이유가 없다. 그냥 `value: unknown`으로 충분하다.
+
+> ⚠️ **제네릭은 "타입들 사이의 관계를 표현할 때만" 의미가 있다.**
+> 입력과 출력이 같다, 한 인자의 키와 다른 인자의 값이 연결된다, 같은 컨테이너지만 안의 타입이 다양하다 — 이런 경우에 쓴다.
+
+**타입 매개변수가 인자에 등장하지 않으면 추론이 안 된다.**
+
+```ts
+function create<T>(): T {
+  return {} as T;
+}
+
+const x = create();        // T = unknown
+const y = create<User>();  // 명시 필요
+```
+
+`T`가 인자에 등장하지 않으면 추론할 단서가 없다. 가능하면 인자에 `T`가 등장하도록 함수를 설계하는 게 낫다.
+
+---
+
+## 정리
+
+제네릭의 핵심은 한 줄로 압축된다.
+
+> **"입력과 출력의 타입 관계를 끊지 않는 도구."**
+
+`any`가 타입을 포기해서 자유를 얻는다면, 제네릭은 타입을 변수로 만들어서 자유와 안전을 동시에 챙긴다. `extends`로 제약을 걸면 그 위에서 동작도 보장할 수 있다.
+
+이 감각이 잡히면 `useState<T>`, `Array<T>`, `Promise<T>` 같은 표기가 더 이상 "그냥 그렇게 쓰는 것"이 아니게 된다. 컨테이너와 그 안의 타입이 어떤 관계로 묶여 있는지가 코드를 읽는 순간 보일 것이다.

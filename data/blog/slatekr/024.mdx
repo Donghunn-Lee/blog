@@ -1,0 +1,186 @@
+---
+title: "[SlateKR #024] 디자인 트랙 (2) — 페이지에 토큰 적용하기"
+date: 2026-05-09
+lastmod: 2026-11-01
+summary: "\\[작업 자체는 단순한 적용일 거라고 예상했는데, 고칠 것들이 많긴 해서 손은 꽤 갔다. 잔존하던 다크 클래스를 정리해야 했고, 패널의 색 표현 방식 자체를 바꿔야 했고, 무엇보다 Tailwind v4의 동작 방식에서 두 군데 문제에 부딪혔다.라이트 베이스로 토큰을 바"
+tags: ["Design System","UI","design-tokens","next.js","SlateKR","tailwind"]
+images: ["/static/images/velog/b1f4b0be-4ac6-4ee5-882e-dbc0cc9f3ec2-image.png"]
+draft: false
+---
+
+[#023](https://velog.io/@dh82680/SlateKR-023-디자인-트랙-1-토큰부터-styleguide까지)에서 토큰을 정의하고 `/styleguide` 라우트에 시각화까지 끝냈다. 이번엔 그걸 종목 상세 페이지 위에 실제로 입히는 단계다.
+
+작업 자체는 단순한 적용일 거라고 예상했는데, 고칠 것들이 많긴 해서 손은 꽤 갔다. 잔존하던 다크 클래스를 정리해야 했고, 패널의 색 표현 방식 자체를 바꿔야 했고, 무엇보다 Tailwind v4의 동작 방식에서 두 군데 문제에 부딪혔다.
+
+---
+
+## 잔존 다크 클래스 정리
+
+라이트 베이스로 토큰을 바꿨지만, 컴포넌트 내부에는 다크 모드 시절에 박힌 클래스가 그대로 남아 있었다. `bg-neutral-900`, `border-white/10`, `bg-neutral-800` 같은 것들. 라이트 페이지 위에서 시각적으로 충돌이 났다.
+
+새 토큰에 맞춰 일괄 치환했다.
+
+| 기존                              | 치환 후         |
+|----------------------------------|----------------|
+| `bg-neutral-900`, `bg-zinc-900`  | `bg-elevated` 또는 `bg-base` |
+| `border-white/10`, `border-white/20` | `border-subtle` |
+| `hover:bg-neutral-700`, `hover:bg-neutral-800` | `hover:bg-muted` |
+
+크게 어려운 작업은 아니었다. 다만 `hover:bg-neutral-700`처럼 다크 시절엔 "한 단계 밝아지는" hover였던 것이 라이트에선 반대로 "한 단계 어두워지는" 방향으로 뒤집혀야 한다는 점을 의식해야 했다. 그래서 hover bg는 `bg-muted`(0.94)로 통일했다 — `bg-elevated`(0.995)보다 짙어 눌리는 피드백이 명확하다.
+
+---
+
+## variant 시스템 도입
+
+여기서부터가 본격적인 작업이다.
+
+기존 StockPanel은 색을 좌측 border accent (`border-l-[3px] border-sage-accent` 형태)로 표현했다. 다크 모드 시절엔 이 방식이 자연스러웠다. 패널 면 자체는 어두운 회색이고, 좌측에 색 띠 하나로 섹션 구분이 됐다.
+
+이미 `/styleguide`에서 디자인했지만, 라이트 베이스로 옮기면서 #023에서 결정한 게 면 색 기반의 다섯 슬레이트였다. sky, sage, amber, lavender, peach가 각각 옅은 배경 + 테두리 + 액센트 3단계로 운용된다. 패널이 면으로 색을 가지면 좌측 border accent는 자연스레 쓸모가 없어진다.
+
+면 색 적용을 위해 StockPanel에 variant prop을 추가했다.
+
+```tsx
+type StockPanelVariant = "plain" | "sky" | "sage" | "amber" | "lavender" | "peach";
+
+const PANEL_VARIANT_CLASSES: Record<StockPanelVariant, string> = {
+  plain:    "bg-elevated border-subtle",
+  sky:      "bg-sky-bg border-sky-border",
+  sage:     "bg-sage-bg border-sage-border",
+  amber:    "bg-amber-bg border-amber-border",
+  lavender: "bg-lavender-bg border-lavender-border",
+  peach:    "bg-peach-bg border-peach-border",
+};
+```
+
+기본값은 `"plain"`. 기존 사용처는 prop을 안 넘기면 그대로 plain으로 떨어지니 회귀 위험이 없다.
+
+여기서 한 군데 손볼 게 있었다. 핵심 지표 패널이 `noBorder` 옵션으로 호출되고 있었다. 다크 시절엔 헤더와 한 덩어리처럼 보이게 하려는 의도였을 것이다. 면 색이 들어간 지금은 sky 면이 그 역할을 하고 있어서 `noBorder`는 오히려 위아래 plain 섹션과의 경계를 흐리게 만들었다. 떼고 일반 sky 패널로 바꿨다.
+
+---
+
+## 6개 섹션 색 매핑
+
+#023에서 이미 정해둔 매핑대로 6 섹션에 variant prop을 박았다.
+
+- 헤더 → plain
+- 핵심 지표 → sky
+- 차트 → plain
+- 재무 요약 → sage
+- 공시 → amber
+- AI 요약 패널 → lavender (Sheet 컴포넌트라 별도 처리)
+
+홈의 ServiceValue 카드 3개도 같은 의미 매핑으로 sky / sage / amber를 박았다.
+
+<div style={{maxWidth: '600px', margin: '24px 0'}}>
+  <img src="/static/images/velog/b1f4b0be-4ac6-4ee5-882e-dbc0cc9f3ec2-image.png" alt="종목 상세 페이지 — 6개 섹션 색 매핑이 적용된 상태" style={{width: '100%', borderRadius: '8px'}} />
+</div>
+
+피치는 관심종목용으로 잡아뒀지만 이번 작업에선 안 썼다. 관심종목 강화 트랙은 별도라 그때 같이 보기로.
+
+AI 요약 패널은 shadcn Sheet 기반이라 StockPanel을 거치지 않는다. SheetContent의 className에 직접 박았다.
+
+```tsx
+<SheetContent
+  className="bg-lavender-bg border-l border-lavender-border ..."
+  ...
+>
+```
+
+오른쪽은 화면 가장자리에 닿으니 좌측 border만 유지했다.
+
+
+---
+
+## 카운트업 — 가격 존재감 장치
+
+데모로 만들어둔 카운트업을 헤더 가격에 붙였다. 이쪽은 단순 적용보다 한 가지 결정을 추가로 했다.
+
+기존 데모는 부드러운 보간이라 가격대와 무관하게 같은 step으로 움직였다. 주식 정보 서비스에선 호가 단위가 가격대별로 다르다. 5만원 미만은 5원, 20만원 미만은 50원 같은 식으로. 이걸 그대로 카운트업 step에 반영하면 디테일이 산다.
+
+다만 막상 적용하고 보니, 프레임이 너무 줄어든 느낌이라 조금 지켜보고 최종 적용은 추후 결정할 생각이다.
+
+우선은 KRX 호가 단위표를 정리해서 lib에 유틸로 박았다.
+
+```ts
+// lib/getTickSize.ts
+export const getTickSize = (price: number): number => {
+  if (price < 2_000) return 1;
+  if (price < 5_000) return 5;
+  if (price < 20_000) return 10;
+  if (price < 50_000) return 50;
+  if (price < 200_000) return 100;
+  if (price < 500_000) return 500;
+  return 1_000;
+};
+```
+
+순수 함수라 lib/ 단독 파일로 분리했다. 카운트업 외에도 차트 호가 표시나 관심종목 카드에서 재사용할 가능성이 있다.
+
+PriceCountUp 컴포넌트는 #023 데모에서 만든 RAF 기반 구조를 그대로 가져오되, step을 `getTickSize(to)`로 받도록 바꿨다. 800ms easeOutCubic, 마지막 프레임에서 정확한 to 값으로 고정.
+
+시작값은 전 거래일 종가, 끝값은 당일 종가다. 페이지 진입 시 가격이 잠깐 움직였다가 멈춘다. 가격 변화를 알리는 장치가 아니라, 가격이 거기 있다는 걸 시선에 묶어두는 장치다.
+
+---
+
+## AI 요약 버튼 
+
+데모 버전 AI 요약 버튼에 대해선 디자인 결정 사항이 있었다. 공시 행의 AI 요약 버튼이 hover로만 보이니 처음 들어온 사용자가 기능 자체를 모를 수 있다는 점.
+
+이번에 그걸 어떻게 할 지 고민했지만, 바로 좋은 아이디어가 떠오르질 않아 일단은 데모를 적용해두기로 했다. 메모해두고 추후 이슈 처리 작업 시 손 볼 생각이다.
+
+그래서 현재는 이전 글에서 확인할 수 있듯이, 평소엔 보이지 않고, 호버되면 우측에서 슬라이딩으로 버튼이 표시된다.
+
+---
+
+## Tailwind v4의 두 함정
+
+위 버튼의 슬라이드 인터랙션을 처음엔 Tailwind 클래스만으로 작성했다. `opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all duration-150`. 데모 페이지에서 똑같이 봤던 패턴이고, 별 의심 없이 들어갔다.
+
+근데 hover를 풀었을 때 슬라이드 아웃이 안 됐다. 사라지는 게 아니라 점멸했다. 들어올 땐 부드러운데 나갈 땐 뚝 끊겼다.
+
+원인을 한참 찾았다. Tailwind v4에서 `translate-x-*`는 내부적으로 `--tw-translate-x` CSS 변수를 거쳐서 적용된다. 그리고 `transition: transform`은 transform 값 자체를 보간하지, transform이 참조하는 CSS 변수의 변화를 보간하지는 않는다. 들어올 땐 hover 상태가 시작 시점에 박히면서 transition이 작동하고, 풀 땐 변수가 즉시 바뀌면서 보간을 건너뛰는 동작이었다.
+
+해결은 transform과 opacity를 인라인 스타일로 옮기는 것. CSS 변수 경유를 안 거치게 하면 transition이 정상 작동한다.
+
+```tsx
+<button
+  style={{
+    opacity: hovered ? 1 : 0,
+    transform: hovered ? "translateX(0)" : "translateX(8px)",
+    pointerEvents: hovered ? "auto" : "none",
+    transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+  }}
+>
+```
+
+이게 첫 번째 함정. v4의 토큰 노출 방식이 v3와 다르다는 건 알고 있었지만, transition까지 영향을 받는 줄은 몰랐다. 사실 작업할 땐 이게 v4 특정 이슈인지조차 한참 헷갈렸다.
+
+---
+
+두 번째는 토큰 시스템 자체에서 나왔다. 이쪽이 더 헷갈렸다.
+
+슬라이드 작업 중에 [AI 요약] 버튼에 `bg-elevated`를 넣었는데 적용이 안 됐다. amber 패널 위에 흰 배경 버튼이 떠 있어야 하는데 amber와 동화되어 보였다. inline style로 `style={{ backgroundColor: "var(--bg-elevated)" }}` 이를 넣으니 정상 작동.
+
+원인을 찾으려고 뜯어보는데, `text-secondary`에 문제가 있었다. `--color-secondary`로 노출하려고 하니 충돌이 났다. shadcn에서 `--secondary`는 버튼이나 뱃지의 배경색이고, 사이트 토큰의 `text-secondary`는 텍스트 위계의 두 번째 단계다. 이름은 같은데 의미와 값이 완전히 다르다. shadcn 네임스페이스에 사이트 토큰을 그냥 얹으면 `bg-secondary` 버튼이 회색 텍스트 색으로 칠해져 컴포넌트가 망가진다.
+
+위 문제의 회피 방식으로 `@utility` 디렉티브를 썼다.
+
+```css
+/* shadcn --secondary와 키워드 충돌 회피 — @theme inline 사용 시 bg-secondary가 깨짐 */
+@utility text-secondary {
+  color: var(--text-secondary);
+}
+```
+
+`@utility`는 Tailwind v4가 제공하는 커스텀 유틸리티 정의 문법이다. shadcn 네임스페이스를 건드리지 않고 사이트 토큰만 별도로 노출할 수 있다.
+
+비대칭 구조가 됐다. base 토큰 7종 중 6종은 `@theme inline`을 통해 노출되는데 `text-secondary` 하나만 `@utility`다. 일관성 측면에선 흠이지만, 충돌 회피라는 명확한 근거가 있다. 향후 토큰 추가 시에도 같은 충돌 가능성이 있는 키워드만 같은 방식으로 처리하면 된다. 주석을 남겨두는 게 그 판단을 보존하는 가장 가벼운 방법이었다.
+
+---
+
+## 정리
+
+이번 트랙은 #023에서 정해둔 토큰을 페이지 위에 박는 단계로 시작했지만, 실제 작업의 절반쯤은 v4 + shadcn 조합이 부르는 함정 두 개를 진단하는 데 들어갔다. 디자인 시스템을 도입한다는 건 토큰을 정의하는 것 못지않게, 그 토큰이 프레임워크의 어느 레이어를 거쳐 클래스가 되는지를 이해하는 일이라는 게 이번 트랙의 교훈이다.
+
+다음 작업은 분기 데이터 수집 트랙. #023에서 메모로 남겼던 재무 expand 표 축 변경(행=항목, 열=기간)이 분기 데이터 없이는 의미가 안 사니 그쪽이 먼저 풀려야 한다. 그밖에 다른 새 패널을 추가할지도 모른다.

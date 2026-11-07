@@ -1,0 +1,107 @@
+---
+title: "카카오•구글 간편 로그인 UX 개선"
+date: 2025-03-08
+lastmod: 2026-11-05
+summary: "카카오, 구글 간편 로그인 시 간헐적으로 닉네임이 숫자 배열로 생성되는 문제가 발생했다. 원인을 파악하고, 사용자에게 알리기 위해 안내 메시지를 설정한다."
+tags: ["Coworkers","team project","trouble shooting"]
+draft: false
+---
+
+관련 PR : [#153](https://github.com/Team-7-Coworkers/coworkers/pull/153)
+
+인증 관련 파트를 팀 프로젝트에서는 처음 맡아봤기에, 되게 단순해 보였는데 생각보다 신경 쓸 게 많다는 점을 처음 알게 되었다.
+
+그 중에서도 까다로웠던 건 '간편 로그인'이었다.
+
+
+## 문제 확인
+
+> 간편 로그인 시 닉네임이 랜덤한 숫자 배열로 설정되는 경우가 발생했다.
+
+\<카카오 로그인>
+![](/static/images/velog/4a36135f-28bb-489e-9f49-01dcff392c24-image.png)
+
+\<구글 로그인>
+![](/static/images/velog/661c7adb-a9e9-4218-aa50-0e7ad17a3603-image.png)
+
+
+
+카카오 로그인의 경우에는 모든 경우에 닉네임이 랜덤 숫자열로 생성되었고, 구글 로그인은 특정 상황에서만 닉네임이 숫자 배열로 생성되었다.
+
+
+
+## 원인 분석
+
+어째서 이런 결과가 생성되는지 알아낸 결과를 설명하기에 앞서 현재 서비스 서버에서 이뤄지고있는 간편 로그인 요청 플로우를 확인해보면 다음과 같다.
+
+>- 카카오  앱에 로그인 요청 -> 인가 코드 발급 -> 서비스 서버에 인가 코드 전달 -> 로그인된(생성된) 서비스의 계정 정보와 토큰을 반환
+- 구글 클라이언트 로그인 요청 -> 인가 코드 발급 -> 인가 코드로 로그인 요청 -> 구글에서 받은 토큰을 서버로 다시 전송 -> 계정 정보 및 토큰 반환
+
+플로우를 확인해보면, 카카오 로그인은 인가 코드만 서버로 보내면 서버에서 카카오로 다시 로그인 요청을 보내고, 그 결과로 서비스 서버의 계정을 생성&로그인 처리를 하고 있다. 하지만 구글 로그인은 인가 코드가 아니라 로그인 요청의 결과를 서버로 보내 계정을 생성한다.
+
+흐름을 다시 파악해보자면, 카카오 로그인은 프로필 정보를 서버에서 처리하기 때문에 클라이언트에서는 그 데이터를 확보할 수 없다. 하지만 구글 로그인은 클라이언트에서 로그인 요청을 처리하고 토큰만 서버로 보내기 때문에 프로필 정보를 클라이언트에서 확보할 수 있다.
+
+<br />
+
+여기까지 알아보고 알아낸 원인을 말하자면, **닉네임 중복** 이 원인이었다.
+앞서 알아본 플로우를 따랐을 때, 서버에서는 카카오와 구글 로그인 두 방법 모두에서 프로필 정보를 가지게 된다. 하지만 계정을 생성할 때 **카카오는 닉네임을 자동으로 생성하지 않는데**, 구글에서는 **구글 프로필의 닉네임**을 우리 서비스의 닉네임으로 할당하고 있었다.
+
+그래서 카카오 로그인의 경우에는 기본적으로 닉네임을 중복되지 않는 숫자열로 설정하고,
+구글 로그인은 먼저 기본 프로필로 닉네임을 생성해보고, 만약 서버에 같은 닉네임이 있다면 그 때는 랜덤 숫자열로 설정하도록 되어 있는 것이었다.
+
+## 해결 방안
+
+원인을 파악했으니 해결 방안은 간단했다.
+
+>닉네임이 숫자로만 이루어져 있는 경우, 닉네임 변경을 권유하는 안내 메시지를 출력하도록 구현했다.
+
+![](/static/images/velog/67505df4-d9ca-466b-87e1-652b73089e34-image.png)
+![](/static/images/velog/963be73b-d19a-4c0a-b78a-a5d7df4f131d-image.png)
+
+각 로그인 처리 후에 닉네임에 대한 유효성 검사 로직을 추가했다. 
+
+```js
+// 카카오
+  const handleKakaoLogin = useCallback(
+    async (code: string, receivedState: string) => {
+      setIsProcessing(true);
+
+      const data = await easySignInMutation.mutateAsync({
+        token: code,
+        provider: 'KAKAO',
+        state: receivedState,
+        redirectUri: process.env.NEXT_PUBLIC_KAKAO_LOGIN_REDIRECT_URI,
+      });
+
+      if (data.user?.nickname && /^\d+$/.test(data.user.nickname)) {
+        toast.warn(
+          '카카오 임시 닉네임을 사용중입니다. 계정 설정에서 닉네임을 변경해주세요!'
+        );
+      }
+    },
+    [easySignInMutation]
+  );
+
+
+// 구글
+  const handleGoogleLogin = useCallback(
+    async (token: string) => {
+      const data = await easySignInMutation.mutateAsync({
+        token,
+        provider: 'GOOGLE',
+      });
+
+      if (data.user?.nickname && /^\d+$/.test(data.user.nickname)) {
+        toast.warn(
+          `'${session?.user.name}'은 사용중인 닉네임 입니다. 계정 설정에서 닉네임을 변경해주세요!`
+        );
+      }
+    },
+    [easySignInMutation, session?.user.name]
+  );
+```
+
+각 상황에 맞는 에러 메시지를 출력하도록 해서, 사용자가 현재 자신이 임시 닉네임을 사용하고 있다는 점을 인지시키고 변경을 권유하도록 했다.
+구글의 경우엔 닉네임 중복이 있는 경우만 숫자 배열이므로, 구글 닉네임을 메시지에 추가했다.
+
+이로써 서버 기본 닉네임이 설정되서 사용자에게 혼란을 줄 수 있던 문제를 해결했다.

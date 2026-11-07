@@ -1,0 +1,256 @@
+---
+title: "[Next.js] Streaming SSR과 Suspense — FE 개념 탐구 #041"
+date: 2026-06-02
+lastmod: 2026-11-05
+summary: "💡 핵심 요약Streaming SSR은 서버에서 만든 HTML을 한 덩어리가 아니라 청크 단위로 흘려보내는 SSR 방식이다. Suspense boundary가 청크의 경계를 정의하고, 그 둘은 분리해서 이해할 수 없다.\"옵션을 켜는 기능\"이 아니라 어떤 API를 쓰느"
+tags: ["React","SSR","Suspense","frontend","next.js","react 18","streaming SSR","FE 개념 탐구"]
+draft: false
+---
+
+> 💡 **핵심 요약**
+>
+> - **Streaming SSR은 서버에서 만든 HTML을 한 덩어리가 아니라 청크 단위로 흘려보내는 SSR 방식이다.** Suspense boundary가 청크의 경계를 정의하고, 그 둘은 분리해서 이해할 수 없다.
+> - "옵션을 켜는 기능"이 아니라 **어떤 API를 쓰느냐와 코드를 어떻게 짜느냐**가 동시에 만족돼야 효과가 나는 모델이다. 그래서 App Router에서 streaming이 "안 되는" 느낌이 들 때, 보통은 boundary 설계의 문제다.
+> - 표면적 동작 뒤에는 `<template>` 자리 표시자, `hidden` div, 인라인 스크립트로 청크를 합치는 메커니즘이 깔려 있다. 이를 통해 "왜 React가 도착하기도 전에 콘텐츠가 채워지는지"를 알 수 있다.
+
+---
+
+## 다 받고 시작, 다 받고 hydrate
+
+헤더와 사이드바, 차트 위젯, 활동 피드가 한 화면에 떠 있는 대시보드를 떠올려보자. 차트는 무거운 집계 쿼리를 호출하느라 800ms가 걸리고, 헤더와 사이드바는 사실 즉시 그릴 수 있다.
+
+[#027 CSR과 SSR](https://velog.io/@dh82680/CSR과-SSR-FE-개념-탐구-027)에서 본 전통적 SSR(`renderToString`)에는 두 가지 구조적 한계가 있다.
+
+**첫째, "다 받고 시작" 문제.**
+서버는 트리 전체를 다 렌더할 때까지 응답을 시작하지 않는다. 차트 800ms가 끝날 때까지 즉시 그릴 수 있는 헤더조차 클라이언트로 가지 못한다. TTFB가 가장 느린 데이터 페칭에 묶인다.
+
+**둘째, "다 받고 hydrate" 문제.**
+HTML이 다 도착해도 끝이 아니다. 클라이언트는 모든 JS 번들이 도착할 때까지 hydration을 시작할 수 없고, 시작되면 트리 전체를 한 번에 처리한다. 사용자에게는 **화면이 보이는데 누르면 반응이 없는 시간**이 생긴다.
+
+두 문제는 다른 층에 있지만 원인은 같다. **단위가 너무 크다.** 페이지 전체가 하나의 단위로 묶여 있어서, "지금 보낼 수 있는 부분"과 "나중에 보낼 부분"을 나눌 방법이 없다.
+
+**Streaming SSR과 Suspense는 이 단위를 잘게 쪼개기 위해 만들어진 메커니즘이다.**
+
+---
+
+## 두 개념의 관계
+
+먼저 둘의 관계를 정리하고 들어가야 그다음 이야기가 헷갈리지 않는다.
+
+- **Streaming SSR → Suspense**: streaming 동작에 `Suspense`는 거의 필수다. Suspense boundary가 없으면 streaming의 의미가 없다. boundary 바깥은 shell이고, shell 전체가 준비돼야 첫 청크가 나간다. boundary가 없으면 결국 "shell = 전체 트리"가 되어 한 번에 응답하는 것과 같아진다.
+- **Suspense → Streaming SSR**: 아니다. Suspense는 클라이언트에서도 동작한다. `lazy()`로 코드 스플리팅한 컴포넌트를 감싸거나 `use(Promise)`로 데이터를 읽을 때, CSR 환경에서도 fallback이 그려진다.
+
+| 환경 | Suspense 역할 |
+| --- | --- |
+| 순수 CSR | `lazy()` 컴포넌트 로딩, `use(Promise)` 데이터 읽기 |
+| 기존 SSR (`renderToString`) | 동작하지 않음 |
+| Streaming SSR (`renderToPipeableStream`) | streaming의 청크 경계 + 데이터 페칭 |
+
+"Streaming SSR을 한다"는 거의 "Suspense를 쓴다"와 같지만, 그 역은 아니다.
+
+---
+
+## 동작 원리 - 표면 동작
+
+서버 측 코드의 표면은 이렇게 생겼다.
+
+```tsx
+const { pipe } = renderToPipeableStream(<Dashboard />, {
+  bootstrapScripts: ['/main.js'],
+  onShellReady() {
+    response.setHeader('content-type', 'text/html');
+    pipe(response);
+  },
+});
+```
+
+```tsx
+function Dashboard() {
+  return (
+    <html>
+      <body>
+        <Header />
+        <Navigation />
+        <Suspense fallback={<ChartSkeleton />}>
+          <SlowChart />
+        </Suspense>
+        <Suspense fallback={<FeedSkeleton />}>
+          <ActivityFeed />
+        </Suspense>
+      </body>
+    </html>
+  );
+}
+```
+
+> 💡 이 코드는 보통 Next.js 같은 프레임워크가 내부에서 호출한다.
+> 일반 애플리케이션 코드에서는 `renderToPipeableStream`을 직접 부를 일이 거의 없다. 그래도 알아야 하는 이유는, 이 API의 모델이 곧 App Router의 동작을 설명하는 어휘이기 때문이다.
+
+흐름은 다음과 같다.
+
+1. 서버는 Suspense **바깥**의 영역 — `Header`, `Navigation` — 을 먼저 렌더한다. 이게 **shell**이다.
+2. shell이 준비되면 `onShellReady`가 발화하고 `pipe(response)`로 첫 청크를 흘려보낸다.
+3. Suspense 내부 컴포넌트들은 데이터를 던지므로(suspending), 첫 청크에는 **fallback HTML**과 자리 표시자가 들어간다.
+4. 사용자는 헤더·내비·두 개의 Skeleton이 그려진 페이지를 거의 즉시 본다.
+5. 서버는 응답을 닫지 않은 채로, 데이터가 준비되는 순서대로 **추가 청크**를 흘려보낸다.
+6. 클라이언트는 각 청크가 도착할 때마다 fallback을 실제 콘텐츠로 교체한다.
+
+shell이 늦으면 streaming의 시작도 늦는다. 그래서 **shell은 최소이면서 페이지의 골격을 보여줄 수 있도록** 설계한다. 페이지 전체를 하나의 거대한 Suspense로 감싸면 shell은 작아지지만 사용자는 곧장 큰 스피너만 본다. boundary를 어디 그을지가 streaming UX의 거의 전부다.
+
+---
+
+## 동작 원리 — 내부 메커니즘
+
+여기서부터가 이 토픽의 깊이다. 청크가 어떻게 클라이언트에서 올바른 자리로 들어가는지를 보며 streaming의 정체를 엿볼 수 있다.
+
+### 첫 청크 — shell
+
+서버가 처음 흘려보내는 HTML은 대략 이런 모양이다.
+
+```html
+<!DOCTYPE html>
+<html>
+<body>
+  <header>...</header>
+  <nav>...</nav>
+  <!--$?--><template id="B:0"></template><div class="chart-skeleton">...</div><!--/$-->
+  <!--$?--><template id="B:1"></template><div class="feed-skeleton">...</div><!--/$-->
+</body>
+</html>
+```
+
+`<!--$?-->`와 `<!--/$-->` 사이가 Suspense boundary다. `<template id="B:0">`은 나중에 들어올 실제 콘텐츠가 들어갈 자리를 표시한다. 그리고 그 옆에 **fallback HTML이 일반 DOM으로 들어 있어 사용자에게 즉시 보인다.**
+
+### 추가 청크 — 데이터 준비 완료
+
+차트 데이터가 준비되면 서버는 이런 청크를 같은 응답 스트림에 흘려보낸다.
+
+```html
+<div hidden id="S:0">
+  <canvas>...실제 차트 HTML...</canvas>
+</div>
+<script>$RC("B:0", "S:0");</script>
+```
+
+`$RC`는 React가 부트스트랩 시 페이지에 주입해 둔 작은 런타임 함수다. 이 함수가 `hidden`으로 들어온 실제 콘텐츠를 `<template id="B:0">` 위치로 옮기고 fallback을 제거한다.
+
+이 메커니즘의 영리한 지점이 있다.
+
+> 💡 **React가 클라이언트에 로드되기 전에도 콘텐츠 교체가 동작한다.**
+> 인라인 `<script>` 하나만 실행되면 되므로, 메인 JS 번들의 도착 여부와 무관하게 HTML 단위로 화면이 채워진다.
+
+이 점은 단순한 디테일이 아니다. JS 번들이 큰 페이지에서도 사용자가 콘텐츠를 보는 시점이 hydration 시점과 분리된다는 뜻이다. **보이는 것**과 **상호작용 가능한 것**이 다른 타임라인을 갖는다.
+
+### Selective Hydration
+
+streaming이 HTML을 쪼개 보낸다면, Selective Hydration은 hydration을 쪼개 처리한다. 이게 React 18 SSR 아키텍처의 다른 한 축이다.
+
+핵심은 세 가지다.
+
+- 각 Suspense boundary는 **독립적으로 hydration된다.** 다른 boundary의 JS가 늦어도, 먼저 도착한 boundary는 먼저 살아난다.
+- 사용자가 아직 hydration되지 않은 boundary 영역을 **클릭하면**, React는 그 boundary의 hydration 우선순위를 즉시 끌어올린다. discrete event(click, keypress)는 capture 단계에서 동기적 hydration을 트리거하고, 그 직후 native event dispatch로 원래 이벤트를 재실행한다.
+- hover, focus 같은 persistent event는 우선순위만 올리고 동기 hydration은 시키지 않는다.
+
+> 📚 동작 디테일은 React 팀이 [reactwg/react-18 Discussion #130](https://github.com/reactwg/react-18/discussions/130)에 정리해 두었다.
+
+---
+
+## TTFB / FCP / TTI에 미치는 영향
+
+streaming이 각 지표에 어떻게 다른 영향을 주는지를 분리해서 본다.
+
+**TTFB (Time to First Byte)** — 감소
+shell만 준비되면 응답이 시작되므로, 가장 느린 데이터 페칭에 묶이지 않는다.
+
+**FCP (First Contentful Paint)** — 감소
+첫 청크에 의미 있는 콘텐츠(헤더, 내비, fallback)가 이미 들어 있다. 브라우저가 첫 청크를 파싱하는 즉시 그릴 수 있다.
+
+**TTI (Time to Interactive)** — 변동 적음
+전체 TTI는 기존 SSR과 큰 차이가 없을 수 있다. 다만 **"부분 인터랙티브 시점"이 훨씬 빨라진다.** 헤더의 검색 버튼은 차트가 아직 로딩 중이어도 살아 있다. Web Vitals 측면에서는 INP가 개선되는 효과로 나타난다.
+
+> ⚠️ **"Streaming SSR은 모든 지표를 개선한다"는 단순화는 정확하지 않다.**
+> shell이 무거우면 TTFB도 늘어나고, fallback이 잦은 레이아웃 변경을 일으키면 CLS가 나빠진다. 측정 없는 도입은 권하지 않는다.
+
+---
+
+## 그래서 우리는 어떻게 쓰는가
+
+streaming은 "옵션을 켜는 기능"이 아니다. **API 선택과 코드 패턴이 동시에 만족돼야** 효과가 난다.
+
+[#038 App Router](https://velog.io/@dh82680/Next.js-Pages-Router와-App-Router-FE-개념-탐구-038)는 내부적으로 `renderToPipeableStream`을 호출하고, 각 route segment를 자동으로 Suspense로 감싼다. 그래서 App Router를 쓰는 순간 streaming은 이미 켜져 있다. 다만 그 위에서 **boundary를 만드는 패턴이 세 가지** 있다.
+
+**① `loading.tsx`**
+
+```text
+app/
+  dashboard/
+    loading.tsx    ← 이 파일이 route segment의 Suspense boundary가 된다
+    page.tsx
+```
+
+route segment 단위의 boundary다. 페이지 단위로 큼직하게 자를 때 쓴다.
+
+**② `async` 서버 컴포넌트**
+
+```tsx
+// app/dashboard/page.tsx
+export default async function Page() {
+  const data = await fetch('...').then(r => r.json());
+  return <Dashboard data={data} />;
+}
+```
+
+[#039 RSC](https://velog.io/@dh82680/Next.js-React-Server-Components-FE-개념-탐구-039)에서 본 서버 컴포넌트는 데이터를 기다리는 동안 자동으로 Suspense처럼 동작한다. 이 컴포넌트가 끝날 때까지 그 부분의 HTML은 stream에 흘러나오지 않는다.
+
+**③ 명시적 `<Suspense>`**
+
+```tsx
+export default function Page() {
+  return (
+    <>
+      <Header />
+      <Suspense fallback={<ChartSkeleton />}>
+        <SlowChart />
+      </Suspense>
+    </>
+  );
+}
+```
+
+세분화된 boundary를 원할 때 직접 쓴다. `loading.tsx`가 route 단위라면, 이건 컴포넌트 단위다.
+
+> ⚠️ **App Router를 쓴다고 자동으로 streaming의 이점을 받는 건 아니다.**
+> boundary가 페이지 최상단 하나뿐이면 shell이 작아지지만, 사용자는 결국 큰 스피너만 본다. boundary가 아예 없는 페이지(전부 동기적으로 만들어지는 페이지)는 streaming 모드에서 동작하지만 결과는 기존 SSR과 같다.
+
+Pages Router는 다르다. `getServerSideProps`는 데이터를 다 받은 뒤 한 번에 응답하는 전통 모델이다. Pages Router에서 streaming을 쓰는 건 사실상 우회이고, 공식 권장 경로는 App Router 마이그레이션이다.
+
+---
+
+## 헷갈리기 쉬운 부분
+
+**"Streaming = 빠르다."**
+청크가 모두 도착하는 총 시간은 줄어들지 않는다. 줄어드는 것은 **사용자가 첫 콘텐츠를 보는 시점**이지 총 전송 시간이 아니다. 데이터 페칭 자체가 느린 문제는 streaming이 해결하지 않는다.
+
+**"Suspense는 모든 비동기 작업에서 동작한다."**
+React 공식 문서가 명시한다. Suspense는 **Suspense-enabled 데이터 소스**에서만 트리거된다. Suspense-enabled 프레임워크의 데이터 페칭, `lazy()`, `use(Promise)`가 그것이다. **`useEffect`나 이벤트 핸들러 안의 `fetch`는 Suspense를 트리거하지 않는다.** "fetch를 Suspense로 감싸면 자동으로 streaming된다"는 가장 흔한 오해다.
+
+**"Streaming SSR과 RSC는 같은 것이다."**
+다른 층의 개념이다. Streaming SSR은 React 트리를 HTML로 렌더해 청크로 보내는 **메커니즘**이고, [#039 RSC](https://velog.io/@dh82680/Next.js-React-Server-Components-FE-개념-탐구-039)는 컴포넌트 자체가 서버에서만 실행되는 **모델**이다. App Router는 두 가지를 결합해서 쓴다.
+
+**"fallback은 사용자에게 보이지 않는다."**
+보인다. 첫 청크에 fallback HTML이 일반 DOM으로 포함되어 즉시 그려진다. fallback 디자인이 곧 첫인상이다.
+
+**"Selective Hydration은 사용자가 클릭한 곳만 hydration한다."**
+정확히는 **클릭 시 그 boundary의 우선순위가 올라가는 것**이지, 클릭하지 않은 곳이 hydration되지 않는 건 아니다. 상호작용이 없으면 idle cycle에 점진적으로 진행된다.
+
+---
+
+## 정리
+
+Streaming SSR을 외워야 할 새 API로 받아들이면 끝이 없다. `renderToPipeableStream`의 콜백, `<template>` 자리 표시자, `$RC` 함수, Selective Hydration의 동기/비동기 동작 — 따로 떼어 보면 그저 조각난 규칙이다. 하지만 한 줄로 압축하면 이렇다.
+
+> **단위를 페이지에서 boundary로 옮긴 SSR.**
+
+shell은 왜 작아야 하는지, fallback은 왜 신경 써서 그려야 하는지, `useEffect` 안의 fetch는 왜 Suspense를 트리거하지 않는지 — 다 같은 원칙의 다른 표현이다. 단위가 잘게 쪼개진 만큼 **어디서 끊을지를 의식적으로 결정해야** 그 잘게 쪼개진 단위가 의미를 갖는다.
+
+[#038 App Router](https://velog.io/@dh82680/Next.js-Pages-Router와-App-Router-FE-개념-탐구-038)에서 "단위를 페이지에서 컴포넌트로 옮겼다"고 했다. streaming은 그 단위 위에서 한 걸음 더 나간다. 이 컴포넌트는 shell에 둘 것인가, boundary 안에 둘 것인가 — 일상 코드에서 이 질문을 자주 마주치진 않는다. 다만 페이지가 느려서 손볼 일이 생겼을 때, boundary를 어디 그을지가 가장 먼저 검토할 지점이 된다.

@@ -1,0 +1,209 @@
+---
+title: "[AimTest #14] 600줄의 'God Component' 해체 - 책임 분리와 Hub 패턴"
+date: 2025-12-16
+lastmod: 2026-10-29
+summary: "이번 작업량은 하나의 게시글에 적기엔 너무 많아 2개로 나눈다.이 게시글에선 책임 분리와 Hub패턴의 적용 방식, 리팩토링 전후 결과에 대해 요약하고, 다음 게시글에서 분리한 핵심 커스텀 훅에 대해 설명할 예정이다.기능 구현에 집중하다 보면 어느새 파일 하나가 비대해지"
+tags: ["AimTest","Soc","custom hook","refactoring"]
+draft: false
+---
+
+이번 작업량은 하나의 게시글에 적기엔 너무 많아 2개로 나눈다.
+
+이 게시글에선 책임 분리와 Hub패턴의 적용 방식, 리팩토링 전후 결과에 대해 요약하고, 다음 게시글에서 분리한 핵심 커스텀 훅 설계 과정에 대해 다루고자 한다.
+
+---
+
+> 기능 구현에 집중하다 보면 어느새 파일 하나가 비대해지는 순간이 온다.
+>
+"메인 컴포넌트니까 이 정도는 괜찮겠지."
+"일단 여기서 state 만들고 내려주자."
+>
+그런 안일한 생각들이 모여 `GameWorld.tsx`는 어느 새 **600라인**에 육박하는 거대한 파일이 되어있었다.
+>
+다른 기능을 하나씩 손 보고 이제 건드릴 게 없나 싶던 때, 눈에 들어온 **작디 작은 스크롤바**는 내게 아직 커다란 과제가 남아있음을 알려주었다.
+
+## 1. 문제 인식 - 무엇이든 다 하는 'God Object'
+
+`GameWorld` 컴포넌트는 내 프로젝트의 핵심이다. 캔버스를 그리고, 게임 루프를 돌리고, UI를 렌더링하는 모든 것이 이 파일에서 일어난다. 하지만 "중앙에서 모듈들을 엮어줘야 한다"는 의도로 하나둘 추가했던 코드들은, "모든 것을 조율한다"는 역할에서 변질되어 **"모든 것을 여기서 한다"**가 되어버린 것이 문제였다.
+
+리팩토링 전, 코드를 열 때마다 마주하는 건 끝도 없는 `useRef`와 `useEffect`의 향연이었다.
+
+#### Before: 혼란의 도가니
+```tsx
+// GameWorld.tsx (Before)
+
+export const GameWorld = ({ gameMode, onGameModeChange }: GameWorldProps) => {
+  // 1. 수많은 상태와 참조들: Ref만 10개가 넘는다
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const targetsRef = useRef<Target[]>([]);
+  const gameRef = useRef({ graceStartAt: null, isGameOver: false });
+  // ... (생략) ...
+
+  const [isRankingOpen, setIsRankingOpen] = useState(false);
+  const [selectedResolution, setSelectedResolution] = useState<Resolution>(DEFAULT_RESOLUTION);
+
+  // 2. 온갖 훅의 호출과 100줄이 넘는 이벤트 핸들러들
+  const handleGameStart = () => { ... };
+  const handlePointerLockChange = () => { ... };
+  const handleMouseMove = () => { ... };
+  
+  // 3. 렌더링 로직의 혼재
+  useEffect(() => {
+     // ... 캔버스 리사이징, 좌표 계산, 그리기 로직이 다 여기 있음
+  }, [...]);
+
+  return ( ... );
+};
+                                         
+// 4. 총 587 라인
+```
+내가 뒤늦게 파악한 이 코드의 문제점은 명확했다.
+
+**1. 과도한 책임:** 캔버스 리사이징, 입력 처리, 게임 로직, 사운드, 렌더링 루프가 한 곳에 뒤섞여 있었다. 이런 걸 **God Component(신적 객체)**라고 한다는 사실을 검색 중 알게 됐다.
+
+**2. 낮은 가독성:** `useEffect`가 너무 많아 데이터의 흐름을 추적하기 힘들다. 특정 기능을 수정하려면 스크롤을 위아래로 수십 번 왕복해야 했다.
+
+**3. 취약한 유지보수:** 렌더링 로직을 건드렸는데 이벤트 리스너가 깨지거나, 리사이징을 고쳤는데 타겟 좌표가 틀어지는 부작용(Side Effect)가 발생하기 딱 좋은 구조였다.
+
+---
+
+## 2. 해결 전략 - 컴포넌트를 'Hub'로 재정의
+
+태초에 내가 목표로 했던 `GameWorld`의 정체성은 공통 `state`들을 정의하고 일부 로직을 처리해서 UI컴포넌트들에 내려주는 부모 컴포넌트의 역할이었다. 지금처럼 모든 기능을 직접 처리하는 것이 아닌, 기능을 구현한 훅들을 조율하는 **Hub**의 역할을 수행해야 했다.
+
+그래서 나는 다음과 같은 원칙을 정하고 리팩토링을 진행했다.
+
+**1. 로직의 위임(Delegation):** 구체적인 구현은 모두 커스텀 훅으로 위임한다.
+
+**2. 관심사의 분리(SoC):** 입력 처리, 캔버스 관리, 렌더 루프 등 성격이 다른 로직은 철저히 분리한다.
+
+**3. Hub 패턴:** `GameWorld`는 오직 훅을 호출하고, 그 결과값을 UI나 Canvas에 연결(Wiring)하는 역할만 수행한다.
+
+위 원칙을 기준으로 기능을 하나씩 포커싱해 커스텀 훅으로 분리하는 작업을 진행했다.
+
+---
+
+## 3. 구조 개편 - 모든 로직의 모듈화
+
+가장 덩치가 크고 중요한 부분들부터 하나씩 뜯어내어 별도의 Hook으로 만들었다. 단순히 코드를 옮기는 것만이 아니라, 각 훅이 **명확한 책임**을 가지도록 설계하면서, 훅의 이름 하나도 신중하게 고민했다.
+
+이미 구현했던 훅에다 6개의 책임을 추가로 분리한 훅을 더해 총 **11개**의 커스텀 훅으로 분산시키게 되었고, 이를 **4 가지 핵심 영역**으로 묶어 요약하자면 아래와 같다.
+
+#### 1) Core Engine (렌더링 & 리소스)
+가장 핵심이 되는 캔버스  렌더링 영역이다. React의 리렌더링 사이클과 분리된 독자적인 시간축을 갖는 게 특징이다.
+
+- `useCanvasRenderLoop`: React 렌더링과 분리된 순수 rAF(requestAnimationFrame) 루프 관리 **(Added)**
+- `useResizeCanvas`: 모드 선택에 따른 윈도우 크기 변경 및 DPR(Device Pixel Ratio) 대응, 게임 영역 계산 **(Added)**
+- `useImageLoader`: 맵 이미지 리소스 로딩 및 상태(loading, loaded, error) 추적
+
+#### 2) Interaction (입력 & 제어)
+사용자의 물리적 입력을 게임 내 논리적 액션으로 변환하고, 브라우저 API를 제어한다.
+
+- `useInputController`: 마우스/키보드 이벤트를 카메라 이동이나 타겟 히트 액션으로 매핑 **(Added)**
+- `usePointerLock`: FPS 게임의 필수 요소인 포인터 잠금(Pointer Lock) API 생명주기 관리 **(Added)**
+- `useFullscreen`: 전체화면 모드 전환 요청
+
+#### 3) Game Logic & Lifecycle (데이터 & 규칙)
+게임의 규칙, 점수, 그리고 진행 상태에 따른 부수 효과(Side Effect)를 관리한다.
+
+- `useGameRuntime`: 게임 진행 중에만 필요한 Side Effect(타이머, 타겟 스포너, 배경/효과음 등) 관리 **(Added)**
+- `useTargetManager`: 타겟 생성, 제거, 위치 계산 등 타겟 관련 로직 전담
+- `useGame`: 점수, 정확도, 게임 오버 등 기본적인 게임 상태 관리
+
+#### 4) Feedback (시각 & 청각)
+게임의 완성도를 높이는 시각/청각적 요소를 담당한다.
+
+- `useVolume`: 효과음 및 배경음악 재생/정지 제어
+- `useBorderFade`: 게임 시작/종료 시 타겟 컨테이너의 테두리 페이드 애니메이션 계산 **(Added)**
+
+여기서 특히 신경 쓴 부분은 렌더링 쪽의 **의존성 주입(Dependency Injection)** 구조다. `useCanvasRenderLoop` 훅을 구현할 때 필요한 많은 모듈들을 어떻게 깔끔하게 내려줄 수 있는지에 대한 고민 끝에, `GameWorld`에서 필요한 서비스 함수들을 모아 `services` 객체로 만들고, 이를 렌더 루프 훅에 주입하는 방식을 찾아 채택했다.
+
+```tsx
+// GameWorld.tsx 중
+
+// 캔버스 렌더 루프에 전달되는 렌더 서비스 집합
+const services = useMemo(() => {
+  return {
+    clearCanvas,
+    applyCameraTransform,
+    renderMapAndBounds,
+    renderTargets,
+    // ... TargetManager 등의 액션을 묶어서 전달
+  };
+}, [targetManagerActions]);
+
+// 렌더링 루프: '어떻게' 그릴지는 services가 알고, '언제' 그릴지는 훅이 안다.
+const loop = useCanvasRenderLoop({
+  canvasRef,
+  services, // 의존성 주입
+  // ...
+});
+```
+
+이렇게 구현한 결과, 렌더링 로직과 루프 관리 로직이 깔끔하게 분리되었고, `GameWorld`는 이 둘을 연결해주는 역할만 수행하게 되었다.
+
+---
+
+## 4. 결과 - 코드의 다이어트와 가독성 향상
+리팩토링 결과, `GameWorld.tsx`의 라인 수를 **절반 수준(587 -> 323)**까지 감축할 수 있었다.
+
+그리고 무엇보다 코드를 대충 보더라도 이 컴포넌트가 어떤 역할을 하는지가 한 눈에 들어오게 되었다.
+
+#### After: 명확한 Hub
+```tsx
+export const GameWorld = ({ gameMode, ... }: GameWorldProps) => {
+  // 1. 기본 자원 및 상태 훅 (Game, Target, Image)
+  const { image, firstLoaded: isMapReady } = useImageLoader({ ... });
+  const [gameState, gameActions] = useGame();
+  const [targetManagerState, targetManagerActions] = useTargetManager();
+
+  // 2. 렌더링 서비스 및 루프 설정
+  const services = useMemo(() => ({ ... }), [targetManagerActions]);
+  const loop = useCanvasRenderLoop({ canvasRef, services, ... });
+
+  // 3. 기능별 훅 호출 (입력, 리사이즈, 런타임 효과 등)
+  useResizeCanvas({ ... });
+  usePointerLock({ ... });
+
+  const { onMouseMove, onMouseDown, sensitivity } = useInputController({
+    loop,
+    gameState,
+    gameActions,
+    // ...
+  });
+
+  useGameRuntime({ ... }); // 게임 진행 중 효과(BGM, Timer 등) 격리
+
+  // 4. UI 렌더링 (순수 JSX)
+  return (
+    <main ref={containerRef} ... >
+      <canvas
+        ref={canvasRef}
+        onMouseMove={onMouseMove}
+        onMouseDown={onMouseDown}
+      />
+      {/* ... UI 컴포넌트들 ... */}
+    </main>
+  );
+};
+
+// 5. 총 323라인
+```
+
+더 이상 복잡한 로직이 컴포넌트 내부에 존재하지 않는다. 캔버스 리사이징 문제가 발생하면 `useResizeCanvas`만 보면 되고, 입력 감도를 조절하려면 `useInputController`만 보면 된다.
+
+이 컴포넌트는 이제 진정한 의미의 **메인 허브**라고 할 수 있게 되었다. 각 모듈(Hook)들이 제 할 일을 하도록 연결만 해줄 뿐, 자잘한 세부 구현 내용은 알 필요가 없어진 것이다.
+
+> 로직 자체도 꽤 복잡한데 이걸 다 쪼개고 병합하는 과정은 경험이 부족한 나로서는 정말 쉽지 않았다. 그래도 명확한 기준을 정하고, 기준에 따라 한 단계씩 작업을 진행하다 보니 조금은 요령이 생긴 것 같았다.
+
+---
+
+🧩 다음 목표
+
+이번에 상당한 양의 작업을 진행하고 핵심만 요약해서 게시글로 정리했다. 하지만 이 리팩토링 과정이 단순히 떼어내고 붙이는 작업만 한 것은 아니고, 훅을 적절히 구현하는 데도 많은 노력이 들었다.
+
+특히 `React의 선언적 상태` 와 `Canvas의 명령형 루프`를 동기화 하는 과정, 그리고 입력 이벤트를 처리하며 마주친 의존성 문제들에는 처음엔 이해도 어려웠던 골치 아픈 디테일들이 숨어 있었다.
+
+이번 글에 이은 다음 글에서는 구현한 커스텀 훅 중 핵심 로직들을 어떻게 설계했고, 그 과정에서 발생한 기술적 난관을 어떻게 해결했는지를 위주로 이야기 하고자 한다.

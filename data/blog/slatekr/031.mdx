@@ -1,0 +1,159 @@
+---
+title: "[SlateKR #031] fetch_financials 최적화, 재무 적합성 점검"
+date: 2026-05-15
+lastmod: 2026-11-05
+summary: "Collector Daily workflow는 fetch_prices.py → fetch_financials.py 순서로 실행된다. 첫 실행 결과:fetch_prices: 1시간 1분fetch_financials: 2시간 41분전체: 3시간 43분GitHub Actio"
+tags: ["Performance","PostgreSQL","dart-api","github actions","neon","SlateKR"]
+images: ["/static/images/velog/6644ebf0-1046-4011-adc3-99ec70cbe084-image.png"]
+draft: false
+---
+
+#030 끝에서 fetch_financials가 너무 오래 걸린다는 문제를 확인했다. 최초 이번 작업은 왜 이렇게 오래 걸리는지를 파악하고, 최적화를 통해 실행 시간을 줄이는 게 목표였다.
+
+---
+
+## 문제: daily cron이 성립하지 않는다
+
+Collector Daily workflow는 `fetch_prices.py` → `fetch_financials.py` 순서로 실행된다. 첫 실행 결과:
+
+- **fetch_prices**: 1시간 1분
+- **fetch_financials**: 2시간 41분
+- **전체**: 3시간 43분
+
+GitHub Actions free tier는 월 2,000분이다. 매일 3시간 43분이면 월 6,700분. 한참 초과한다.
+2회차는 1시간 정도 줄었지만, 여전히 길다.
+
+![](/static/images/velog/6644ebf0-1046-4011-adc3-99ec70cbe084-image.png)
+
+
+---
+
+## 원인
+
+fetch_financials의 구조를 보면 이유가 보인다.
+
+5년치 데이터를 수집하기 위해 **21개 period**(연간 5개 + 분기 16개) × **2,223개 종목** = 약 46,000번 iteration을 매번 전부 순회한다.
+
+초기 5년치 풀 적재가 끝난 상태라 대부분은 `existing_keys` 체크로 스킵되지만, 문제는 **미공시 종목**이다. 스킵되지 않으니 매번 DART API를 호출하고, None 응답이 돌아와도 `sleep(0.3)` 이 붙는다. **미공시 수백 개 × 21 period × 0.3초** — 이게 쌓여서 2시간 40분이 된 거다.
+
+---
+
+## 수정 1 — None 응답 sleep 축소
+
+가장 간단한 수정부터. DART에 요청을 보내고 None이 돌아오면, 그 종목은 해당 기간에 공시를 안 한 거다. rate limit을 거의 소모하지 않으니 sleep을 길게 잡을 이유가 없다.
+
+- **정상 응답**: `sleep(0.3)` 유지
+- **None 응답**: `sleep(0.3)` → `sleep(0.05)`
+
+---
+
+## 수정 2 — 순회 범위 축소
+
+먼저 탐색 기간을 축소했다. `--years-back` 옵션을 추가해 연도를 설정할 수 있도록 했다. 초기 풀 적재는 끝났으니, cron에서는 `--years-back 2`로 최근 2년만 순회하면 된다. 21개 period → 9개 period.
+
+여기까지 적용하고 돌려봤더니 **1시간 19분**. 절반 이하로 줄긴 했는데, 좀 더 줄일 수 있겠다는 생각이 들었다.
+
+재무제표 데이터는 가격과 성격이 다르다. 매일 새 데이터가 생기는 가격과 달리, 재무제표는 **분기 실적 발표 시점에만** 나온다.
+
+- 1Q 실적 → 5월
+- 2Q 실적 → 8월
+- 3Q 실적 → 11월
+- 연간 실적 → 3월
+
+그 사이에 2년치 9개 period를 매일 순회하는 건 의미 없는 반복이다.
+
+`--years-back`을 `--periods`로 바꿨다. 5년치 전체 period 리스트를 생성한 뒤 끝에서 N개만 슬라이싱하는 방식이다. cron에서는 `--periods 2`로 호출한다. 2026년 5월 기준이면 **2026 Q1과 2025 Q4**, 딱 두 개만 순회한다.
+
+---
+
+## 수정 3 — SSL 재연결
+
+최적화를 적용하고 검증하는 과정에서 SSL 에러가 터졌다.
+
+```
+psycopg2.OperationalError: SSL connection has been closed unexpectedly
+```
+
+#030에서 period 전환 시 커넥션을 재생성하도록 수정했었다. 근데 이번에는 하나의 period **안에서** 끊긴 거다. 스킵이 1,000개 이상 연속되면 DB 쿼리가 없는 채로 시간이 지나고, Neon이 유휴 커넥션으로 판단해서 끊어버린다.
+
+`fetch_prices.py`에서 200 ticker마다 커넥션을 교체하는 패턴이 이미 있었다. 같은 방식으로 **500 iteration마다 재연결**하도록 추가했다. 2,223개 종목 기준으로 period당 최대 4회 재연결한다.
+
+---
+
+## 검증 결과
+
+전체 실행 기록을 정리하면:
+
+| 실행 | fetch_prices | fetch_financials | 전체 | 비고 |
+|------|-------------|-----------------|------|------|
+| #1 최초 실행 | 1h 01m | 2h 41m | 3h 43m | 최적화 전, 5년 전체 |
+| #2 동일 날짜 재실행 | 21m | 2h 25m | 2h 47m | price 스킵 많음 |
+| #3 years-back 2 | 24m | 55m | 1h 19m | price 스킵 + 범위 축소 |
+| #4 periods 2 | 1h 08m | 50m | 1h 59m | 새 날짜 + 범위 재축소 |
+| #5 prices 최적화 (적재됨) | 40s | 50m | ~51m | bulk 선조회 + skip sleep |
+| #6 신규 적재 예상 | ~55m | ~50m | ~1h 45m | 월 ~3,150분 |
+
+fetch_financials만 보면 **2시간 41분 → 50분**으로 약 70% 감소.
+
+fetch_prices는 새 데이터가 있는 날은 약 1시간, 이미 적재된 날은 20분대지만 장 마감 후 매일 1회 실행해야하니 1시간이라고 봐야 한다.
+
+전체 workflow는 약 **2시간**. 월 기준 3,600분이라 free tier 2,000분을 넘긴다. fetch_financials는 이미 50분까지 줄였으니, 남은 병목은 fetch_prices 쪽이다.
+
+![](/static/images/velog/830b6161-8c59-4252-b2c3-fbd872d76cfd-image.png)
+
+---
+
+## fetch_prices 병목 축소
+
+fetch_prices.py를 뜯어보니 두 가지 낭비가 있었다.
+
+첫 번째는 **skip 케이스에도 sleep이 붙는 것**이다. 이미 적재된 종목이면 API 호출 없이 건너뛰는데, 그 뒤에도 `sleep(0.3)`이 실행된다. 2,663개 종목 × 0.3초 = 약 13분이 skip만으로 소모되는 셈이다. sleep을 실제 API 호출 후에만 실행하도록 변경했다.
+
+두 번째는 **종목별 DB 쿼리**다. 각 종목의 마지막 적재 날짜를 확인하기 위해 `SELECT MAX(date) FROM daily_prices WHERE ticker = ?`를 2,663번 호출한다. 시작 시 한 번에 `SELECT ticker, MAX(date) FROM daily_prices GROUP BY ticker`로 전체를 읽어오면 DB 왕복 2,663번이 1번으로 줄어든다.
+
+이 두 수정의 효과:
+- **이미 적재된 날**: 20분 → **40초**
+- **신규 적재 (예상)**: 1시간 1분 → **약 55분** (DB 왕복 제거분)
+
+---
+
+## 부수적으로 확인한 것들
+
+### 정정 공시는 갱신되지 않는다
+
+최적화 과정에서 정정 공시 대응 여부도 확인했다.
+
+현재 로직은 실행 시작 시 DB에서 `(ticker, year, quarter, report_type)` 집합을 읽어 `existing_keys`를 만든다. 키가 있으면 **DART API 자체를 호출하지 않고** 건너뛴다. INSERT SQL은 `ON CONFLICT DO UPDATE`로 되어있어서 호출까지 도달하면 갱신은 되지만, 그 앞에서 차단된다.
+
+이건 로드맵 F4에 등록되어 있던 항목인데, 이번에 원인이 정확히 특정됐다.
+
+### 재무 데이터 정확성 — 지배주주 귀속 문제
+
+다음 작업(B1)을 위한 사전 조사도 진행했다. 현재 collector가 수집하는 항목을 확인한 결과:
+
+| 항목 | 지배주주 기준? | 비고 |
+|------|--------------|------|
+| net_income | **아니오** — 전체 | `ifrs-full_ProfitLoss` (비지배 포함) |
+| total_equity | **아니오** — 전체 | `ifrs-full_Equity` (비지배 포함) |
+| eps | 예 | DART 자체 계산값 |
+| bps | **아니오** — 과대평가 | 전체 자본 / 발행주식수 |
+
+EPS는 IFRS 기준상 지배주주 귀속이지만, BPS는 비지배지분을 포함한 전체 자본으로 계산되고 있다. PER/PBR에서 분자/분모 기준이 불일치하는 상태다.
+
+수정 방향은 명확하다. collector의 `TARGET_ACCOUNTS`에서 두 항목을 교체하면 된다:
+- `ifrs-full_ProfitLoss` → `ifrs-full_ProfitLossAttributableToOwnersOfParent`
+- `ifrs-full_Equity` → `ifrs-full_EquityAttributableToOwnersOfParent`
+
+다음 작업에서 처리할 예정이다.
+
+### Actions Node.js 24 업그레이드
+
+workflow를 만지는 김에 Node.js 20 deprecation 경고도 처리했다. 6월 2일부터 강제 전환이라, 두 workflow 파일 모두 `actions/checkout@v5`, `actions/setup-python@v6`으로 올렸다.
+
+---
+
+## 정리
+
+collector 두 스크립트 모두 최적화해서 전체 workflow를 3시간 43분에서 약 1시간 45분으로 줄였다. free tier 2,000분은 여전히 넘기지만, financials를 weekly로 분리하면 해결 가능한 범위다.
+
+배포 후에 데이터 정확성 문제가 드러나는 건 좀 아이러니한 흐름이긴 하다. 근데 실환경에 올려놓고 나서야 보이는 것들이 있다는 걸, 이번 Phase 1 작업들을 거치면서 꽤 체감하고 있다.

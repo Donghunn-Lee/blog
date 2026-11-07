@@ -1,0 +1,98 @@
+---
+title: "NEXT 환경에서의 zustand store 초기화 이슈"
+date: 2025-03-01
+lastmod: 2026-11-06
+summary: "처음 GNB(Global Navigation Bar) 컴포넌트를 구현하면서 zustand를 활용해 사용자 정보 및 팀 리스트 데이터를 관리하도록 구현했다.기본적인 기능을 구현한 뒤 테스트를 해보는데, 문제를 파악했다.페이지를 전환하면 zustand store의 데이터들"
+tags: ["Coworkers","nextjs","team project","zustand"]
+draft: false
+---
+
+## 페이지 전환 시 store의 초기화
+
+![](/static/images/velog/6d001bb2-ff05-4edd-8c1a-555412b84897-image.png)
+
+처음 `GNB(Global Navigation Bar)` 컴포넌트를 구현하면서 [zustand](https://zustand.docs.pmnd.rs/getting-started/introduction)를 활용해 사용자 정보 및 팀 리스트 데이터를 관리하도록 구현했다.
+기본적인 기능을 구현한 뒤 테스트를 해보는데, 문제를 파악했다.
+
+페이지를 전환하면 zustand store의 데이터들이 모두 초기화되는 것이다.
+
+---
+## 왜 zustand store가 초기화되는가?
+
+
+zustand는 React 환경에 최적화된 클라이언트 상태 관리 라이브러리이다.
+내부적으로 useState hook을 사용해 스토어를 구현하고, state와 setter 모두 React hook을 사용한다.
+React hook은 클라이언트 환경에서만 동작한다. 서버 컴포넌트에서는 state를 정의할 수 없기 때문이다.
+
+위 전제를 이해하고 나서 문제에 접근해보겠다.
+
+>React 환경일 때는 이상 없지만 문제는 Next 환경, 즉 **클라이언트 컴포넌트**가 아니라 **서버 컴포넌트**일 때 발생한다.
+
+페이지가 전환될 때, CSR(클라이언트 사이드 렌더링)을 지원하는 React 환경에서는 애플리케이션이 로드된 이후 메모리에 상주한다.
+이 때 컴포넌트 인스턴스도 마찬가지로 유지되고, 내부의 zustand store역시 같은 인스턴스로 남아 초기화되지 않는다.
+
+하지만 Next환경에서 지원하는 SSR(서버 사이드 렌더링)의 경우, 각 페이지 요청마다 새로운 컴포넌트 인스턴스를 렌더링한다. 당연히 zustand store역시 새롭게 생성되어, 페이지가 전환되면 store가 초기화되는 것이다.
+
+전역 상태 관리를 위한 라이브러리인데, 상태가 초기화 되어버리는 문제가 발생했다.
+
+## 로컬 스토리지의 데이터로 store를 초기화
+
+문제를 해결하기 위해, 나는 로컬 스토리지를 사용했다.
+
+Token이나 사용자 정보 등은 서비스 이용 시 여러 곳에서 지속적으로 필요하기에 원래부터 로컬 스토리지를 사용할 계획이었고,
+팀 데이터 역시 마찬가지로 GNB에서 사용되는 이상 store가 계속 유지되어야 할 필요성이 있었다.
+
+각 데이터들은 스토어에 저장될 때 로컬 스토리지에도 동일하게 저장하도록 했다.
+그리고 페이지가 전환되어 store가 다시 초기화 될 때, 로컬 스토리지에 저장된 값으로 초기화하여 마치 같은 인스턴스를 계속 사용하는 것처럼 동작하도록 구현했다.
+
+```js
+const useTeamStore = create<TeamState>()(
+  persist(
+    (set, get) => ({
+      teamList: [],
+      currentTeam: null,
+
+      // 팀 목록을 상태에 저장하는 함수
+      setTeamList: (teams) => set({ teamList: teams }),
+
+        // 팀 ID를 기반으로 현재 팀을 설정하는 함수
+      setCurrentTeam: (teamId) => {
+        const selectedTeam = get().teamList.find((team) => team.id === teamId);
+        set({ currentTeam: selectedTeam || null });
+      },
+
+      // 팀 상태 초기화
+      clearTeam: () => {
+        set({ teamList: [], currentTeam: null });
+      },
+    }),
+    {
+      name: 'coworkers-team-storage', // 로컬 스토리지에 저장될 키 이름
+      // 로컬 스토리지에 저장할 상태 선택
+      partialize: (state) => ({
+        teamList: state.teamList,
+        currentTeam: state.currentTeam,
+      }),
+    }
+  )
+);
+```
+
+앞서 말한 로직을 구현하기 위해 zustand의 `persist` 메소드를 사용했다.
+로컬 스토리지를 사용할 때, 스토어가 초기화 될 때마다 로컬 스토리지의 값을 우선적으로 초기화 해주는 메소드이다.
+`useUserStore`도 팀 스토어와 동일한 방식으로 구현했다.
+
+
+## Hydration Error 주의사항
+
+로컬에서 코드를 수정하고 개발 서버에 반영해 테스트 할 때, 일시적으로 `Hydration Error`가 발생했다.
+
+>Hydration Error: 서버에서 렌더링한 HTML과 클라이언트에서 실행되는 JavaScript의 초기 상태가 일치하지 않을 때 발생하는 에러.
+
+에러가 발생하는 대부분의 경우는 zustand 스토어를 초기화할 때, 동적 값을 초기화하는 경우다.
+
+조금 복잡한 형태의 객체를 store에 저장하고, 그 값이 비동기 값이거나 `Math.random`값을 사용한 어떤 state인 경우엔 서버와 클라이언트의 초기값이 달라져 에러가 발생할 수 있다.
+
+>zustand 만의 문제는 아니지만, SSR을 지원하는 서버 컴포넌트 환경에서는 Hydration Error를 주의해야 함.
+
+다행히 나의 경우엔 코드를 수정하는 과정에서 로컬 스토리지에서 가져와 초기화 한 값이 일시적으로 매칭이 안 되었던 것 같다. Next 프로젝트를 진행할 때는 이 부분을 항상 주의해야 한다는 사실을 명심하게 되었다.

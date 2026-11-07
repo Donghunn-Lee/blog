@@ -1,0 +1,108 @@
+---
+title: "[SlateKR #030] collector 전환 — MySQL에서 PostgreSQL, 그리고 GitHub Actions"
+date: 2026-05-14
+lastmod: 2026-10-31
+summary: "이전 작업 이후 아직 collector 스크립트 4개가 MySQL 기준이었다. 웹 서버 쪽은 그리고 실행 환경도 바꿔야 했다. 원래 EC2에서 cron으로 돌릴 계획이었는데, EC2를 버렸으니 다른 곳이 필요했다. GitHub Actions cron으로 가기로 했다.m"
+tags: ["CI/CD","PostgreSQL","github actions","neon","psycopg2","SlateKR"]
+draft: false
+---
+
+#029에서 Vercel 배포까지 끝냈다. 배포된 서비스가 있으니 다음은 데이터가 매일 갱신되게 만드는 일이다.
+
+이전 작업 이후 아직 collector 스크립트 4개가 MySQL 기준이었다. 웹 서버 쪽은 #028에서 Neon(PostgreSQL)으로 전환했지만, 데이터를 수집해서 DB에 넣는 Python 스크립트들은 여전히 `mysql.connector`로 로컬 MySQL에 붙고 있었다.
+
+그리고 실행 환경도 바꿔야 했다. 원래 EC2에서 cron으로 돌릴 계획이었는데, EC2를 버렸으니 다른 곳이 필요했다. GitHub Actions cron으로 가기로 했다.
+
+---
+
+## 드라이버 교체
+
+`mysql.connector` → `psycopg2`로 바꾸는 건 기계적인 작업이었다.
+
+4개 스크립트 전부에서 import를 바꾸고, 커넥션 생성을 `psycopg2.connect(os.getenv("DATABASE_URL"))`로 통일했다. 기존에는 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` 다섯 개를 각각 읽었는데, Neon은 연결 문자열 하나로 끝난다.
+
+placeholder는 `%s`인데, psycopg2도 `%s`를 쓰니까 그대로 뒀다. boolean 리터럴만 `is_active = 1`을 `is_active = true`로 바꿔야 했다 — PostgreSQL은 boolean 타입이 따로 있어서 정수 리터럴을 안 받는다.
+
+SQL 문법이 바뀌는 건 INSERT 쪽이었다.
+
+```sql
+-- MySQL
+INSERT INTO ... ON DUPLICATE KEY UPDATE col = VALUES(col)
+
+-- PostgreSQL
+INSERT INTO ... ON CONFLICT (...) DO UPDATE SET col = EXCLUDED.col
+```
+
+`fetch_prices.py`, `fetch_financials.py`, `fetch_stocks.py` 세 파일에 이 패턴이 있었고, `fetch_shares.py`는 UPDATE만 쓰고 있어서 SQL 변경 없이 드라이버만 바꿨다.
+
+## 커넥션 관리 통일
+
+드라이버를 바꾸면서 한 가지 더 정리했다. 커넥션 관리 패턴이 스크립트마다 달랐다.
+
+`fetch_prices.py`와 `fetch_financials.py`는 모듈 최상단에서 전역 커넥션을 하나 만들어 스크립트 전체에서 재사용하고 있었다. `fetch_shares.py`와 `fetch_stocks.py`는 `get_connection()` 팩토리 함수로 필요할 때 만들어 쓰는 방식이었다.
+
+전역 커넥션 패턴을 팩토리 방식으로 통일했다. 드라이버 교체 김에 같이 한 거라 추가 작업량은 거의 없었고, 코드가 GitHub에 올라가 있으니 눈에 띄게 패턴이 섞여 있는 건 좋지 않았다.
+
+---
+
+## GitHub Actions workflow
+
+EC2 대신 GitHub Actions cron으로 실행 환경을 옮겼다.
+
+workflow를 두 개로 나눴다.
+
+**collector-daily.yml** — 매일 UTC 07:00 (KST 16:00, 장 마감 후)에 `fetch_prices.py`와 `fetch_financials.py`를 실행한다.
+
+**collector-weekly.yml** — 매주 금요일 UTC 08:00 (KST 17:00)에 `fetch_stocks.py`와 `fetch_shares.py`를 실행한다. `fetch_stocks`가 종목 목록을 갱신하니까 먼저 돌고, 끝나면 `fetch_shares`가 돌도록 step 순서를 맞췄다.
+
+두 workflow 모두 `workflow_dispatch` 트리거를 넣어서 수동 실행도 가능하게 했다. 환경변수는 GitHub Repository Secrets에 `NEON_DIRECT_URL`, `DART_API_KEY`, `FSS_API_KEY`를 등록하고 workflow에서 `DATABASE_URL`로 매핑한다.
+
+한 가지 — 웹 서버(Vercel)에서는 Neon pooler URL을 쓰지만, collector에서는 direct URL을 쓴다. pooler는 serverless 환경의 짧은 연결에 최적화된 거고, collector 배치 작업은 수십 분 동안 연결을 유지하니까 direct가 맞다.
+
+---
+
+## Neon SSL 끊김
+
+push하고 weekly workflow를 수동으로 돌려봤다. `fetch_stocks`는 정상 완료. `fetch_shares`는 2660개 종목을 순회하면서 약 80분 걸렸지만 완료됐다.
+
+문제는 daily에서 터졌다. `fetch_financials`가 21개 period(5년 × 4분기 + 올해 1분기)를 순회하는데, 첫 period를 처리하고 다음으로 넘어가는 시점에서 에러가 났다.
+
+```
+psycopg2.OperationalError: SSL connection has been closed unexpectedly
+```
+
+Neon은 서버리스 PostgreSQL이다. 유휴 커넥션을 일정 시간 후에 끊는다. 하나의 period를 처리하는 데 10분 가까이 걸리고, 그사이 DB에 쿼리를 안 보내니까 커넥션이 죽어 있는 거였다.
+
+로컬 MySQL에서는 이런 문제가 없었다. MySQL 서버가 직접 떠 있으니 타임아웃이 길고, 같은 머신이라 네트워크 레이어도 없었다. 서버리스 DB로 옮기면서 생긴 특성이다.
+
+수정은 간단했다. `fetch_financials.py`는 period 단위로 커넥션을 새로 만들도록 바꿨다. 21개 period면 21번 커넥션을 열고 닫는 거다.
+
+`fetch_prices.py`도 같은 이슈가 생길 수 있었다. 2660개 종목을 하나씩 순회하면서 하나의 커넥션을 쓰고 있었으니까. 다만 여기는 ticker마다 커넥션을 만들면 2660번이 되는데, 커넥션 생성 자체에 SSL 핸드셰이크 비용이 있어서 그건 너무 잦다. 200개 ticker마다 커넥션을 교체하는 배치 방식으로 했다. 2660개 기준 커넥션 14개.
+
+---
+## fetch 최적화 필요성 파악
+
+workflow가 돌아가는 걸 확인하고 넘어가려는데, `collector-daily`가 3시간 43분. 거의 4시간이 걸렸다. 그 중에서도 `fetch_financials`가 2시간 41분이나 걸렸다.
+
+분명 이상했다. 처음 데이터 적재 시에는 이 정도 소요 시간은 자연스럽다고 생각했지만, 지금은 다르다. 이미 데이터가 대부분 적재되어있고, 그 데이터는 이미 Neon에 이관한 상태라 대부분 스킵되어 대폭 시간이 단축되어야 할 터였다.
+
+혹시나 싶어 다시 한 번 실행해보니, `fetch_financials`가 2시간 25분으로 약간 줄긴 했으나 여전히 길었다.
+
+원인은 루프 구조 자체에 있었다.
+
+- 21년 1Q ~ 26년 1Q까지 총 21개 period × 2,223개 종목 = 약 46,000번 iteration을 매번 전부 순회
+- 적재된 건은 스킵하지만, 미공시 종목은 매번 DART API를 호출
+- None 응답이어도 sleep 0.3초가 붙는다
+- 미공시 수백 개 × 21 period × 0.3초 — 이게 쌓여서 4시간
+
+GitHub Actions free tier가 월 2,000분인데, 이거 하나만 매일 돌리면 월 7,200분이다. 이 상태로는 daily cron이 성립하지 않는다.
+
+해결 방향은 잡아뒀다. 초기 5년치 풀 적재는 끝났으니 cron에서는 최근 2년만 순회하도록 years_back 옵션을 분리하고, 미공시 응답에는 sleep을 줄이는 것. 다음 작업에서 처리할 예정이다.
+
+---
+
+## 정리
+
+#028에서 인프라를 바꾸고, #029에서 데이터를 옮기고, 이번에 수집 파이프라인까지 전환했다. MySQL → PostgreSQL 마이그레이션이 세 세션에 걸쳐서 끝난 셈이다.
+
+다만 "끝났다"고 하기엔 fetch_financials 실행 시간 문제가 남아있다. 파이프라인 전환 자체는 완료됐지만, 실환경에서 매일 돌릴 수 있는 상태는 아직 아니다. 다음 작업에서 이걸 먼저 해결하고 나면, 그때부터 배포된 서비스에 데이터가 매일 갱신되기 시작한다.

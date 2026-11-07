@@ -1,0 +1,190 @@
+---
+title: "[Next.js] React Server Components — FE 개념 탐구 #039"
+date: 2026-05-24
+lastmod: 2026-10-24
+summary: "💡 핵심 요약React Server Components(RSC)는 컴포넌트를 서버에서만 실행하고, 그 결과를 직렬화해 클라이언트에 보내는 모델이다. SSR이 \"HTML을 언제 만드느냐\"의 문제라면, RSC는 \"컴포넌트가 어디서 실행되느냐\"의 문제다.서버 컴포넌트의 코"
+tags: ["React","frontend","next.js","rendering","rsc","server components","FE 개념 탐구"]
+draft: false
+---
+
+💡 **핵심 요약**
+- **React Server Components(RSC)는 컴포넌트를 서버에서만 실행하고, 그 결과를 직렬화해 클라이언트에 보내는 모델이다.** SSR이 "HTML을 언제 만드느냐"의 문제라면, RSC는 "컴포넌트가 어디서 실행되느냐"의 문제다.
+- 서버 컴포넌트의 코드와 의존성은 **클라이언트 번들에 포함되지 않는다.** 마크다운 파서, DB 쿼리, 무거운 포매팅 라이브러리가 서버에 머문다.
+- 핵심은 `"use client"` 경계를 **얼마나 말단으로 내릴 수 있느냐**다. 이 경계 설계가 RSC 모델에서 가장 자주 마주치는 판단 지점이다.
+
+---
+
+## SSR이 가진 아쉬움
+
+[#027 CSR과 SSR](https://velog.io/@dh82680/CSR과-SSR-FE-개념-탐구-027)에서 본 대로, SSR은 서버가 HTML을 미리 만들어 보내고 클라이언트가 받아서 hydration하는 모델이다. 초기 렌더가 빠르고 SEO에도 유리하다는 점에서, 한동안 이 모델은 "충분히 좋은 답"처럼 보였다.
+
+그런데 SSR이 보내는 HTML은 정적인 껍데기다. 그 위에 인터랙션을 얹으려면, 같은 컴포넌트의 JavaScript를 다시 클라이언트로 보내고 한 번 더 실행해야 한다. 마크다운을 파싱하는 라이브러리, 날짜를 포매팅하는 라이브러리, 코드 syntax highlighter — 사용자가 화면에서 건드릴 일이 전혀 없는 코드까지 모두 클라이언트 번들에 실린다.
+
+서버에 데이터가 있는데, 클라이언트까지 JavaScript를 다 내려보낸 다음에야 "그 데이터 주세요"라고 다시 서버에 묻는다. `useEffect` → 로딩 스피너 → 데이터 도착 → 다시 렌더. 이 왕복은 익숙하지만, 구조적으로는 낭비다.
+
+**React Server Components는 이 낭비를 도려내기 위해 만들어진 새로운 빌딩 블록이다.**
+
+---
+
+## RSC가 SSR과 다른 층의 문제라는 것
+
+가장 먼저 잡아야 할 지점이 여기다. RSC와 SSR은 자주 같이 등장하지만, 서로 다른 축의 개념이다.
+
+| | SSR | RSC |
+|---|---|---|
+| 다루는 문제 | HTML을 **언제** 만드느냐 | 컴포넌트가 **어디서** 실행되느냐 |
+| 결과물 | HTML 문자열 | 직렬화된 React 트리 (RSC Payload) |
+| 컴포넌트 코드 | 결국 클라이언트로 전달됨 (hydration용) | **클라이언트로 전달되지 않음** |
+
+SSR은 RSC 없이도 동작한다. Pages Router 시절의 Next.js가 그랬다. RSC도 이론적으로 SSR 없이 동작할 수 있다. Next.js App Router가 둘을 함께 쓰기 때문에 헷갈리기 쉽지만, 개념적으로는 독립적이다.
+
+이 분리를 명확히 잡고 가야, 다음 단계의 "RSC Payload는 HTML이 아니다"라는 말이 자연스럽게 들어온다.
+
+---
+
+## 동작 원리 — 서버 컴포넌트가 화면에 그려지기까지
+
+서버 컴포넌트가 요청을 받고 클라이언트 화면에 그려지는 흐름은 세 단계로 정리할 수 있다.
+
+### 1단계. 서버에서 컴포넌트 실행
+
+서버 컴포넌트는 그냥 서버에서 실행되는 함수다. 그래서 `async`일 수 있고, 데이터베이스에 직접 접근하거나, 파일 시스템을 읽거나, 내부 API를 호출해도 된다. `useEffect`가 필요 없다.
+
+```tsx
+// 서버 컴포넌트 — 이 코드는 클라이언트로 전달되지 않는다
+async function ArticleList() {
+  const articles = await db.query('SELECT * FROM articles');
+
+  return (
+    <ul>
+      {articles.map(a => <li key={a.id}>{a.title}</li>)}
+    </ul>
+  );
+}
+```
+
+여기서 `db`는 클라이언트에 노출되지 않는다. `articles`를 가져오는 로직 전체가 서버에서 끝나고, 클라이언트에는 그 **결과**만 전달된다.
+
+### 2단계. RSC Payload 생성
+
+실행 결과는 HTML이 아니라 **RSC Payload**라는 직렬화 포맷으로 변환된다. Next.js 공식 문서의 표현을 빌리면, RSC Payload는 *"렌더된 React Server Components 트리의 compact binary representation"*이다.
+
+이 페이로드에는 세 가지가 들어 있다.
+
+- 서버 컴포넌트가 렌더된 결과 (엘리먼트 트리)
+- 클라이언트 컴포넌트가 들어갈 자리를 가리키는 **참조 placeholder**와 해당 JS 파일 경로
+- 서버 컴포넌트에서 클라이언트 컴포넌트로 전달되는 **props** (직렬화된 형태)
+
+서버 컴포넌트의 소스 코드는 페이로드에 포함되지 않는다. 이미 실행이 끝나고 결과만 남았기 때문이다. **이게 RSC가 번들 크기를 줄이는 핵심 메커니즘이다.**
+
+### 3단계. 클라이언트에서 트리 조립
+
+클라이언트의 React 런타임이 페이로드를 받아 실제 트리를 조립한다. 서버 컴포넌트 자리에는 이미 만들어진 결과가 그대로 들어가고, 클라이언트 컴포넌트 자리에는 해당 JS가 로드되어 실행된다. 그 결과로 [#021 React의 렌더링](https://velog.io/@dh82680/SlateKR-021-AI-공시-요약-4-공시-분류와-파싱-정돈)에서 본 일반 React 트리와 동일한 형태가 완성된다.
+
+여기서 한 가지 짚어둘 것. Next.js처럼 RSC와 SSR을 함께 쓰는 환경에서는, 이 페이로드를 한 번 더 사용해 **초기 HTML도 같이 생성한다.** 사용자는 HTML을 먼저 보고, 그 위에서 페이로드를 통한 트리 조립과 hydration이 이어진다.
+
+---
+
+## 서버 컴포넌트와 클라이언트 컴포넌트의 경계
+
+App Router에서 모든 컴포넌트는 기본이 서버 컴포넌트다. 클라이언트 컴포넌트로 만들려면 파일 최상단에 `"use client"`를 붙인다.
+
+```tsx
+"use client";
+
+import { useState } from 'react';
+
+export function LikeButton() {
+  const [liked, setLiked] = useState(false);
+  return <button onClick={() => setLiked(!liked)}>♥</button>;
+}
+```
+
+이 경계가 만드는 제약은 명확하다.
+
+**서버 컴포넌트에서 할 수 없는 것**
+- `useState`, `useEffect` 같은 Hook — 서버에서 한 번 실행되고 끝이기 때문에 상태와 생명주기가 없다
+- 이벤트 핸들러 등록 — 서버에는 브라우저 이벤트가 없다
+- `window`, `document` 같은 브라우저 API 접근
+
+**클라이언트 컴포넌트에서 할 수 없는 것**
+- `async` 컴포넌트, DB 직접 접근, 파일 시스템 접근 같은 서버 전용 기능
+- 다른 서버 컴포넌트를 `import`해서 직접 렌더링 (단, **children으로 받는 건 가능** — 아래에서 설명)
+
+> ⚠️ **`"use client"`는 "이 컴포넌트는 CSR만 한다"가 아니다.**
+> 클라이언트 컴포넌트도 서버에서 한 번 HTML로 렌더링되고, 클라이언트에서 hydration된다. `"use client"`는 "이 컴포넌트는 클라이언트 번들에 포함되고, 클라이언트에서도 실행된다"는 뜻이다.
+
+---
+
+## `"use client"` 경계를 어디에 둘 것인가
+
+이게 RSC 모델에서 가장 자주 마주치는 실전 판단이다.
+
+`"use client"`가 붙은 파일이 import하는 **모든 모듈**은 클라이언트 번들에 포함된다. 그래서 페이지 최상단에 무심코 `"use client"`를 박으면, 그 아래로 통째로 클라이언트가 된다. RSC의 이점이 다 날아간다.
+
+핵심 패턴은 두 가지다.
+
+### 패턴 1. 경계를 말단(leaf)으로 내린다
+
+상호작용이 필요한 가장 작은 단위에만 `"use client"`를 붙인다. 좋아요 버튼, 검색 입력창, 토글 — 그 컴포넌트만 클라이언트가 되고 나머지는 서버에 머문다.
+
+### 패턴 2. 서버 컴포넌트를 children으로 합성한다
+
+클라이언트 컴포넌트 안에서 서버 컴포넌트를 직접 `import`해서 렌더링할 수는 없다. 하지만 `children`이나 `props`로 받아서 렌더링하는 건 가능하다. 이미 서버에서 실행이 끝난 결과가 그대로 전달되기 때문이다.
+
+```tsx
+// layout.tsx — 서버 컴포넌트
+import ClientSidebar from './ClientSidebar';
+import ArticleList from './ArticleList'; // 서버 컴포넌트
+
+export default function Layout() {
+  return (
+    <ClientSidebar>
+      <ArticleList /> {/* 이미 서버에서 실행된 결과가 children으로 들어감 */}
+    </ClientSidebar>
+  );
+}
+```
+
+```tsx
+// ClientSidebar.tsx
+"use client";
+import { useState } from 'react';
+
+export default function ClientSidebar({ children }: { children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(true);
+  return (
+    <aside>
+      <button onClick={() => setIsOpen(!isOpen)}>Toggle</button>
+      {isOpen && children}
+    </aside>
+  );
+}
+```
+
+`ClientSidebar`는 토글 상태를 가진 클라이언트 컴포넌트지만, 그 안에 들어가는 `ArticleList`는 여전히 서버에서 실행된다. **인터랙티브한 껍데기 안에 서버에서 만든 내용물이 들어가는 구조다.** 이 패턴을 잘 쓰면 트리 전체가 서버나 클라이언트 한쪽으로 쏠리는 일을 피할 수 있다.
+
+---
+
+## 헷갈리기 쉬운 부분
+
+**"RSC는 SSR의 새 버전이다."**
+같은 층의 개념이 아니다. SSR은 HTML을 서버에서 만드는 모든 방식을 뜻하고, RSC는 컴포넌트를 서버에서 실행하는 새 모델이다. RSC Payload는 HTML이 아닌 직렬화된 React 트리이고, SSR로 만든 HTML과는 다른 데이터다. Next.js App Router는 두 가지를 함께 써서 "초기 HTML + 점진적 트리 조립"을 만들지만, 그건 Next.js의 조합 방식이지 RSC 자체의 정의가 아니다.
+
+**"서버 컴포넌트 안에 클라이언트 컴포넌트가 하나라도 있으면 이점이 사라진다."**
+트리 전체가 서버냐 클라이언트냐로 정해지는 게 아니다. **노드 단위로 결정된다.** 서버 컴포넌트의 코드와 의존성은 그대로 서버에 남고, 클라이언트 컴포넌트로 표시된 부분만 클라이언트 번들에 들어간다. 그래서 경계 설계가 중요하다.
+
+**"서버 컴포넌트는 사용자가 인터랙션할 때마다 다시 실행된다."**
+서버 컴포넌트는 라우트 단위의 요청·재검증·서버 액션 응답 같은 시점에 다시 실행된다. 클라이언트의 `setState`로는 서버 컴포넌트를 다시 돌릴 수 없다. 클라이언트 상태가 바뀐다고 서버 트리가 갱신되지 않는다는 점을 모르고 들어가면, "왜 데이터가 안 바뀌지?"에서 한참 헤매게 된다.
+
+---
+
+## 마무리
+
+RSC를 외워야 할 새 규칙으로 받아들이면 끝이 없다. 서버 컴포넌트의 제약, `"use client"`의 위치, children으로 합성하는 패턴 — 따로 떼어 보면 그저 조각난 규칙이다. 하지만 한 줄로 압축하면 이렇게 된다.
+
+> **컴포넌트의 코드를 클라이언트로 보내지 않고, 결과만 보내는 모델.**
+
+왜 서버 컴포넌트에 Hook이 없는지, 왜 `"use client"`를 말단으로 내려야 하는지, 왜 children 패턴이 그렇게 자주 등장하는지. 다 같은 원칙의 다른 표현이다.
+
+[#038 App Router](https://velog.io/@dh82680/Next.js-Pages-Router와-App-Router-FE-개념-탐구-038)에서 본 "단위를 페이지에서 컴포넌트로 옮겼다"는 방향성이, RSC에 와서야 비로소 자기 자리를 찾는다. 컴포넌트 단위로 사고한다는 말은, 결국 컴포넌트 단위로 **어디서 실행될지를 결정한다**는 뜻이다.

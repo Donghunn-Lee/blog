@@ -1,0 +1,109 @@
+---
+title: "사용자 친화적 Form 유효성 검사와 에러메시지"
+date: 2025-03-06
+lastmod: 2026-11-06
+summary: "회원가입 입력 폼 유효성 검사의 빈틈을 발견하고, 이를 해결하기 위해 효율적인 유효성 검사 구조에 대한 탐색을 진행했다."
+tags: ["Coworkers","form","team project","trouble shooting","validation"]
+draft: false
+---
+
+> 회원가입 입력 폼 유효성 검사의 빈틈을 발견하고, 이를 해결하기 위해 효율적인 유효성 검사 구조에 대한 탐색을 진행했다.
+
+---
+
+## 문제 확인
+
+![](/static/images/velog/05ca1edd-076c-41b8-a7c7-ebb0e5fd54a4-image.png)
+
+회원 가입 페이지에서, 비밀 번호와 비밀 번호 확인을 정상 입력 후에 비밀번호를 변경하게 되면 `비밀번호가 일치하지 않습니다.` 라는 메시지가 발생하지 않은 채 회원가입 버튼이 비활성화되는 오류가 확인되었다.
+
+## 원인 분석
+
+에러 메시지가 출력되지 않는 현상은, 현재 입력 Form에서 사용중인 커스텀 컴포넌트 `InputField`의 유효성 검사 이벤트 핸들러가 `onBlur` 이벤트에만 할당되어 있는 것이 원인이었다.
+
+```tsx
+// InputField 컴포넌트 사용
+<div className="space-y-3">
+  <label htmlFor="password">비밀번호</label>
+  <InputField
+    id="password"
+    type="password"
+    placeholder="비밀번호를 입력해주세요."
+    value={formData.password}
+    onChange={handleChange}
+    validator={validatePassword}
+    isPassword={true}
+  />
+</div>
+```
+
+또한 회원 가입 메시지가 출력되지 않는 것은 각각의 입력 폼에 대한 유효성 검사와 별도로, 버튼은 전체 값에 대한 유효성 검사를 한 번 더 진행하여 활성화시키고 있기 때문이었다.
+```tsx
+  const validateForm = useCallback(() => {
+    const newErrors = {
+      nickname: validateNickname(formData.nickname.trim()) || '',
+      email: validateEmail(formData.email.trim()) || '',
+      password: validatePassword(formData.password.trim()) || '',
+      confirmPassword:
+        validateConfirmPassword(formData.confirmPassword.trim()) || '',
+    };
+
+    setIsValidated(!Object.values(newErrors).some((error) => error));
+  }, [formData]);
+```
+
+
+두 가지 원인을 인지하고 다시 정리하자면 해결해야 하는 문제는 다음과 같이 정리할 수 있었다.
+
+>비밀번호 확인과 버튼의 유효성 검사 트리거가 달라서, 버튼이 활성화되지 않는 원인을 사용자에게 전달하지 못해 혼동을 주고 있는 상황
+
+
+## 해결 방안
+> 모든 값이 입력 되었을 때 버튼 유효성 검사 결과를 에러 메시지로 추가
+
+```tsx
+{!isValidated && (
+  <div className="mt-2 text-sm text-danger">
+    {Object.values(formData).every((val) => val.trim() !== '') && (
+      <div className="mt-2 text-sm text-danger">
+        {Object.keys(errors)
+          .filter((key) => errors[key as keyof typeof errors])
+          .map((key, idx) => (
+            <p key={idx}>{errors[key as keyof typeof errors]}</p>
+          ))}
+      </div>
+    )}
+  </div>
+)}
+```
+![](/static/images/velog/af1d30c4-9d92-4fec-8963-c64d7476f7cb-image.png)
+
+문제의 핵심은 유효성 검사에서 오류가 검출되었는데, 이를 사용자가 알기 어렵다는 것이었다. 그리고 이 현상은 사용자가 모든 값을 입력한 뒤에, 실수 또는 의도적으로 비밀번호 값을 변경했을 때 알아챌 수 있을 것이다.
+
+그래서 나는 모든 값이 입력된 상황에서 유효하지 않은 값이 발견된 경우, 해당 에러 메시지를 버튼 밑에 추가함으로써 사용자에게 주는 혼동을 줄였다. 이 방법이 현재 짜여진 구조에서 간단한 기능만 추가하고 오류는 충분히 해결할 수 있는 방법이었다.
+
+## 고려했던 다른 방법들
+### 1. InputField 컴포넌트의 유효성 검사 트리거 추가
+첫 번째로 고민한 방법은 유효성 검사를 `onBlur`가 아닌 다른 이벤트에 선택적으로 할당할 수 있도록 하는 것이었다.
+목적은 `onChange`이벤트에도 유효성 검사를 등록할 수 있도록 하는 것이었는데, 이 방법의 경우엔 문제 발생 시점과 동일하게 다른 필드의 값이 변화하는 것은 인지할 수 없어서 문제를 해결할 수 없었다.
+
+### 2. 모든 유효성 검사를 즉각적으로 진행
+
+또 다른 방법은 모든 필드의 에러 메시지를 버튼 하단에 일괄적으로 출력하는 것이다.(↓)
+![](/static/images/velog/c1c87111-9f5e-4f4b-b6b5-47804b0d43fc-image.png)
+이 방법은 필드의 유효성 검사를 각각 정확하게 진행한다는 점에선 좋은 방법이었다. 하지만 입력 Form에서 에러 메시지의 경우에는 각 필드 밑에 출력되는 것이 사용자 경험 측면에서 더 나은 방법이라고 판단했고, 팀 내 의견 역시 같은 의견이었다.
+최종적으론 각 방법들을 모두 PR 내용에 포함하여 설명하고, 팀미팅에서 의견을 물어 처음 설명한 방법이 채택되었다.
+
+### 아쉬운 점 & 배운 점
+
+다른 방법들도 적용해보고 최종적으로 가장 괜찮게 느껴지는 방법으로 위 방법을 선택했지만, 현재의 구조에선 사용자가 입력 필드를 다시 클릭해 유효성 검사가 진행될 경우에 같은 에러 메시지가 필드와 버튼 하단에 각각 발생한다는 아쉬움이 있다.(↓)
+
+![](/static/images/velog/c367c0ec-a963-4859-95c7-f614d6c0f957-image.png)
+
+또 해 보고 싶은 건 `react-hook-form`을 사용했을 때는 어떻게 유효성 검사를 진행할 수 있는지 궁금하다. 팀원의 사용 경험만 들어보고 직접 사용해본 적은 없는데, 나중에 폼을 구현하게 된다면 사용해보고, 여기선 내가 고민했던 부분을 어떻게 해결할 수 있을지 찾아봐야겠다.
+
+<br /><br />
+
+**배운 점**은 입력 필드 컴포넌트를 만든다면, 비밀번호/비밀번호 확인 등의 경우도 고려해서 더욱 유연한 구조로 만들어야 겠다는 생각이다. 처음 `InputField` 컴포넌트를 팀원이 구현했을 때, 이 같은 상황을 미리 고려하지 못했기에 나 또한 별 다른 피드백이 없었다. 
+
+다른 필드의 값과 비교가 필요한 비밀번호/비밀번호 확인 값의 경우에 에러 메시지 출력을 어떻게 해야 할 지에 대한 고민을 일찍부터 해야 하고, 일관된 유효성 검사를 사용자가 쉽게 파악할 수 있도록 보여주어야 한다는 점을 분명히 인지하게 되었던 경험이었다.

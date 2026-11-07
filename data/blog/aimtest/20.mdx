@@ -1,0 +1,123 @@
+---
+title: "[AimTest #20] EC2 + MySQL에서 Vercel + Neon으로"
+date: 2026-10-16
+lastmod: 2026-11-02
+summary: "EC2 프리티어가 끝나면서 AimTest 배포를 Vercel + Neon으로 옮겼다. 바뀐 것과 걸린 것을 정리한다.원칙은 셋이다. 리팩토링하지 않는다, src/를 건드리지 않는다, 검증 · rate limit 같은 기능을 끼워 넣지 않는다. 랭킹 데이터는 이관하지 않"
+tags: ["AimTest","PostgreSQL","Vercel","express","neon"]
+draft: false
+---
+
+> EC2 프리티어가 끝나면서 AimTest 배포를 Vercel + Neon으로 옮겼다. 바뀐 것과 걸린 것을 정리한다.
+
+## 1. 배경
+
+| 항목 | 내용 |
+| --- | --- |
+| 기존 구조 | EC2 1대 + Docker Compose 컨테이너 4개(프론트 · Express · MySQL · Nginx), GitHub Actions → scp 배포 |
+| 서비스 크기 | 테이블 1개 · 엔드포인트 5개 · 쿼리 5개 |
+| 계기 | 프리티어 만료. 이 규모에 컨테이너 4개와 배포 파이프라인을 유지할 이유가 없었다 |
+| 목적지 | Vercel + Neon. SlateKR과 같은 스택이라 관리 포인트가 하나로 줄고, 프론트와 API가 한 프로젝트라 CORS · 도메인 설정이 사라진다 |
+
+원칙은 셋이다. 리팩토링하지 않는다, `src/`를 건드리지 않는다, 검증 · rate limit 같은 기능을 끼워 넣지 않는다. 랭킹 데이터는 이관하지 않고 스키마만 옮겼다.
+
+---
+
+## 2. 무엇이 바뀌었나
+
+| 구분 | Before | After |
+| --- | --- | --- |
+| 프론트 호스팅 | Docker 컨테이너 + Nginx | Vercel 정적 호스팅 (CRA 프리셋) |
+| API | Express 컨테이너, 포트 3001 | Express 앱을 Vercel Function 1개로 export |
+| 라우팅 | Nginx `location /api/` 프록시 | `vercel.json` rewrite `/api/(.*)` → `/api/index` |
+| DB | MySQL 8 컨테이너, `mysql2` 풀 | Neon PostgreSQL, `@neondatabase/serverless` |
+| 배포 | GitHub Actions → scp → EC2 | `main` push 시 Vercel 자동 배포 |
+
+### 프론트 — 수정 0건
+
+지난 글에서 Nginx를 붙이며 API 호출을 `/api/...` 상대경로로 바꿔뒀다. 프론트는 서버 위치를 모르므로, 서버가 Vercel Function으로 옮겨가도 알 필요가 없다.
+
+### API — Express 유지, 위치만 이동
+
+Vercel은 루트 `package.json`의 의존성만 설치하므로 `server/`의 코드를 `api/`로 옮겼다. 프레임워크는 바꾸지 않았다. 바꾸면 라우트 · 컨트롤러를 다시 써야 한다.
+
+```ts
+// api/index.ts — app.listen · cors · dotenv 제거, 앱을 export
+const app = express();
+app.use(express.json());
+app.get('/api/health', checkHealth);
+app.use('/api/rankings', router);
+export default app;
+```
+
+```json
+// vercel.json — /api/* 전부를 함수 하나로
+{ "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }] }
+```
+
+컨트롤러 · 라우트 · db는 `api/_lib/`에 뒀다. 밑줄 폴더는 Vercel이 함수로 노출하지 않는다.
+
+### DB — 커넥션 풀 27줄 → 드라이버 1줄
+
+```ts
+export const sql = neon(process.env.DATABASE_URL!);
+```
+
+쿼리 5개는 `?` 바인딩 + `[rows]` 구조분해를 태그드 템플릿으로 치환했다. 실질 수정은 순위 쿼리의 캐스팅 하나다. PostgreSQL의 `COUNT(*)`는 bigint라 드라이버가 문자열로 돌려주기 때문에, 프론트가 기대하는 숫자로 맞추려면 `::int`가 필요하다.
+
+```ts
+// Before
+const [rows] = await pool.execute<RowDataPacket[]>(
+  'SELECT COUNT(*) + 1 as rank_position FROM rankings WHERE score > ?',
+  [score]
+);
+
+// After
+const rows =
+  await sql`SELECT (COUNT(*) + 1)::int AS rank_position FROM rankings WHERE score > ${score}`;
+```
+
+응답 형태는 `POST`만 `{ message, result }` → `{ message, ok: true }`로 바뀌었다(`mysql2`의 `ResultSetHeader` 제거).
+
+DDL은 `AUTO_INCREMENT` → `GENERATED ALWAYS AS IDENTITY`, `float` → `REAL`, `timestamp DEFAULT CURRENT_TIMESTAMP` → `TIMESTAMPTZ DEFAULT now()`, 테이블 안의 `KEY` → 별도 `CREATE INDEX`로 바꾸고, 백틱과 `ENGINE` · `CHARSET` · `COLLATE`를 지웠다.
+
+### 삭제
+
+`Dockerfile` 2개 · `docker-compose.yml` · `nginx.conf` · `deploy.yml` · `server/` 전체.
+
+---
+
+## 3. 검토에서 조정한 5건
+
+작업은 Claude Code에 위 결정을 전제로 맡기고 결과를 검토했다. 전제와 다르게 처리된 5건은 근거를 확인하고 수용했다.
+
+| # | 처리 | 근거 |
+| --- | --- | --- |
+| 1 | 루트 `tsconfig` exclude를 `server/**/*` → `api/**/*` | CRA tsconfig의 include가 `**/*.ts`라 `api/`가 잡혀 `rootDir: src` 위반 |
+| 2 | 순위 쿼리에 `::int` | 2절 참조. `COUNT(*)`가 문자열로 반환됨 |
+| 3 | SPA fallback 미추가 | CRA 프리셋 기본 라우트에 `/(.*)` → `/index.html`이 이미 있음. 프레임워크 정의 소스로 확인 |
+| 4 | lock 파일 재동기화 | `server/` 의존성이 루트로 올라옴 |
+| 5 | `float` → `REAL`, `created_at` nullable 유지 | 기존 데이터 형태를 바꾸지 않는 최소 매핑 |
+
+---
+
+## 4. 빌드 환경 차이 — `CI=true`
+
+로컬 빌드는 통과했는데 Vercel 빌드가 실패했다. Vercel은 빌드 환경에 `CI=true`를 넣고, CRA는 그 경우 ESLint 경고를 에러로 승격한다. 로컬에서 경고로만 지나가던 `react-hooks/exhaustive-deps` 4건이 걸렸다.
+
+`CI=false`로 우회하는 대신 수정했다. deps 추가 3곳, 규칙이 검사할 수 없는 `...deps` 스프레드 1곳만 해당 줄 disable. `src/` 수정은 이 3개 파일(+4 / −3)이 전부다.
+
+---
+
+## 5. 결과
+
+- 로컬에서 export된 앱을 띄워 엔드포인트 5개를 호출해 확인한 뒤 배포. 프로덕션에서 health · 기록 저장 · 조회 · 순위 · SPA fallback 확인
+- 커밋 5개, 28개 파일, +728 / −2,177 (lock 파일 제외 +74 / −258)
+- 주소: `fps-aim-test.vercel.app`
+
+---
+
+## 6. 정리
+
+프론트는 상대경로 덕에 손대지 않았고,
+raw 쿼리 5개는 바인딩 문법과 캐스팅 하나로 끝났다.
+이전 자체보다 빌드 환경 차이를 맞추는 데 더 손이 갔다. 이제 유지할 것은 Vercel 프로젝트 하나와 Neon 테이블 하나다.

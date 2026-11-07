@@ -1,0 +1,232 @@
+---
+title: "[SlateKR #022] AI 공시 요약 (5) — 사이드 패널 추가 및 동작 검증"
+date: 2026-05-06
+lastmod: 2026-10-28
+summary: "\\[기능 자체는 단순하다. 공시 행에 \"AI 요약\" 버튼을 달고, 누르면 패널이 열리고, 결과가 표시된다. 다만 그 단순한 흐름을 만들기 위해 결정해야 할 게 몇 가지 있었고, 통합 후 발견한 간헐적 실패는 따로 추적이 필요했다. 글은 그쪽에 무게를 실었다.진입 시점에"
+tags: ["UI","ai-summary","architecture-decision","errorhandling","next.js","SlateKR"]
+images: ["/static/images/velog/1ea02396-c687-4c0e-b58b-d8562830f1d9-image.png"]
+draft: false
+---
+
+[#018](https://velog.io/@dh82680/SlateKR-018-AI-공시-요약-1-본문-추출과-캐시-레이어-그리고-동등성-검증)부터 [#021](https://velog.io/@dh82680/SlateKR-021-AI-공시-요약-4-공시-분류와-파싱-정돈)까지 본문 추출, 캐시, Gemini 연동, 프롬프트, 분류 보강을 차례로 정리해왔다. 이번 글은 그 백엔드를 화면에 붙이는 단계다.
+
+기능 자체는 단순하다. 공시 행에 "AI 요약" 버튼을 달고, 누르면 패널이 열리고, 결과가 표시된다. 다만 그 단순한 흐름을 만들기 위해 결정해야 할 게 몇 가지 있었고, 통합 후 발견한 간헐적 실패는 따로 추적이 필요했다. 글은 그쪽에 무게를 실었다.
+
+---
+
+## 사전 필터링은 폐기했다
+
+진입 시점에는 사전 필터링 정책부터 정해야 할 줄 알았다. #021에서 비ZIP 응답이 집합투자증권 관련 서류에 집중된다는 걸 확인했으니, 그 유형들은 아예 버튼을 안 띄우는 게 자연스러워 보였다.
+
+근데 실제로 정책을 짜려고 보니 두 지점에서 막혔다.
+
+**첫째, 1000건 검사에서 비ZIP 분포가 제목 키워드와 완벽히 일치하지 않는다.**
+집합투자증권 관련이 대부분이지만 자산유동화·첨부정정·정정신고서제출요구 같은 소수 예외가 있었고, 사전 필터링은 어떤 키워드 집합을 쓰든 불완전하다.
+
+**둘째, 사후 안내는 어차피 필요하다.**
+`lib/dart-document.ts`에 `file_not_found` 분기가 이미 들어가 있고, UI에서 그걸 받아 처리하는 경로는 사전 필터링과 무관하게 만들어야 한다. 사전 필터링을 두면 "왜 어떤 공시는 버튼이 없지?"라는 사용자 인지 부담이 추가로 생긴다.
+
+그래서 정책을 뒤집었다. **모든 공시에 버튼을 노출하고, 호출 시점에 분기해 안내한다.** 단순하다.
+
+다만 한 예외는 남았다. 정기보고서(FINANCIAL)는 250만자 규모라 #017 시점에 요약 대상에서 빠졌다. 이건 원문 부재가 아니라 정책상 거부라 결이 다르다. UI에서 차단하는 방식도 가능했지만, **호출 단(`summarize-disclosure.ts`)에서 차단하는 쪽으로 갔다.** 추후 청크 분할 요약 같은 방식으로 재편입할 때 한 곳만 수정하면 되도록.
+
+차단 신호는 `SummarizeResult`에 `not_summarizable` kind를 추가해 표현했다.
+
+```ts
+export type SummarizeError =
+  | { kind: "rate_limit" }
+  | { kind: "timeout" }
+  | { kind: "safety_blocked" }
+  | { kind: "empty_response" }
+  | { kind: "api_error"; message: string }
+  | { kind: "not_summarizable" };  // 추가
+```
+
+#019에서 결과 타입으로 통일해뒀던 게 여기서 효과를 봤다. 새 차단 분기가 결과 타입의 한 종류로 깔끔하게 들어가고, 호출자(API Route)는 매핑 한 줄만 추가하면 된다.
+
+---
+
+## 호출 경로 — Server Action 대신 API Route
+
+호출 경로 후보가 셋이었다.
+
+>(a) Server Action
+(b) API Route
+(c) TanStack Query mutation + API Route.
+
+(c) TanStack Query는 가장 먼저 떨어졌다. `disclosure-summaries` 테이블에 DB 캐시가 이미 있다. 같은 공시를 한 세션 내에서 여러 번 누를 일이 거의 없으니 클라이언트 캐시를 또 두는 건 이중 캐시였다. `CLAUDE.md`의 "TanStack Query는 클라이언트 상호작용 영역만"이라는 원칙과도 거리가 있었다.
+
+(a) Server Action vs (b) API Route는 좀 더 봤다. Server Action은 폼 제출 패턴과 자연스럽고 라우트가 안 늘어난다. 다만 패널 안의 미세한 상태 분기(로딩/성공/차단/에러 + 5종 에러 매핑)와 결이 안 맞았다. AbortController 제어도 까다롭다.
+
+(b)로 갔다. 이유는 두 가지였다.
+
+**클라이언트에서 fetch를 직접 제어할 수 있다.** 패널이 열려 있을 때 사용자가 닫으면 진행 중인 요청을 AbortController로 취소할 수 있다. 같은 공시를 다시 누르면 DB 캐시 hit으로 즉시 응답하니 클라이언트 캐시는 불필요하다.
+
+**Next.js의 표준 패턴이다.** 라우트 하나 추가하는 비용은 작고, 응답 스펙이 외부에서 보이는 형태로 명시되는 점도 좋다.
+
+```
+POST /api/disclosure-summary
+Request: { rcept_no: string, disclosure_nm: string }
+Response: { ok: true, summary: string }
+        | { ok: false, error: { kind: ErrorKind } }
+```
+
+`disclosure_nm`을 request body에 포함한 건 작업 도중 결정된 거다. FINANCIAL 판정에 공시 제목이 필요한데, `disclosures` 테이블이 따로 없고 DART 목록 API는 `rcept_no`만으로 조회 불가(`corp_code` 필요)였다. 클라이언트가 이미 표시 중인 제목을 그대로 보내는 방식이 가장 단순했다.
+
+엄밀히는 클라이언트가 임의로 조작할 여지가 있긴 한데, 우회해도 250만자 정기보고서가 LLM 호출에서 토큰 한도로 어차피 실패한다. 보안 위협이 아니라 비용 낭비 정도라 이번 단계에선 충분하다고 봤다.
+
+---
+
+## 패널 형태 — Drawer + non-modal
+
+요약 표시 형태로 모달, 사이드 패널, 인라인 확장 셋을 봤다.
+
+모달은 공시 목록을 가린다. 사용자가 여러 공시를 차례로 보는 흐름과 안 맞다.
+
+인라인 확장은 카드 사이가 벌어져 목록 흐름이 깨진다. 요약 본문이 길면 더 심해진다.
+
+사이드 패널로 갔다. 정확히는 shadcn `Sheet` 기반의 Drawer 형태. SlateKR이 [#010](https://velog.io/@dh82680/SlateKR-010-패널-래퍼와-디자인-언어)에서 정한 "Slate 패널 언어"와도 이름까지 맞다.
+
+다만 기본 Sheet는 modal 동작이라 패널 뒤 페이지가 잠긴다. 사용자가 요약을 보다가 잠깐 패널을 닫고 차트나 핵심 지표 같은 다른 섹션을 확인한 뒤 다시 돌아오는 흐름을 상정했기 때문에, 이 동작을 풀어야 했다.
+
+`modal={false}` + `showOverlay={false}` 조합으로 처리했다. shadcn Sheet primitive에 `showOverlay` prop을 추가해 overlay 렌더링을 제어할 수 있게 했고, 그 결과 패널이 열려 있어도 페이지 본체는 정상적으로 스크롤·클릭이 된다.
+
+상태는 종목 상세 페이지 레벨에서 관리하기로 했다.
+
+```ts
+const [panelOpen, setPanelOpen] = useState(false);
+const [selection, setSelection] = useState<SummarySelection | null>(null);
+```
+
+패널을 닫아도 `selection`은 유지된다. 다시 열면 마지막으로 본 요약이 그대로 보인다(같은 공시면 DB 캐시 hit이라 즉시).
+
+여기서 중요한 결정 하나가 있었다. 이 상태를 Zustand 같은 전역 스토어에 둘지, 페이지 레벨 useState에 둘지. **페이지 이동 시 패널이 자연스럽게 닫혀야 한다고 봤기 때문에 useState로 갔다.** 페이지 언마운트 시 자동으로 정리된다. 다른 페이지로 이 패널을 가져갈 일도 없다.
+
+---
+
+## 트리거는 두 군데에
+
+트리거 위치도 한 번 정리가 필요했다.
+
+처음에는 공시 섹션 헤더에 "AI 요약" 버튼을 두고 거기서 패널을 토글하는 안을 생각했다. 근데 사용자가 패널을 닫고 다른 섹션을 보다가 다시 열고 싶을 때, 공시 섹션까지 스크롤로 돌아가야 한다. 흐름이 어색했다.
+
+페이지 우측에 fixed로 고정한 토글 버튼을 따로 두기로 했다. 이 편이 사용자에게도 더 익숙할 것이라 판단했다. 패널 닫힘/열림 상태에 따라 화살표 방향과 위치가 따라 움직인다.
+
+```
+패널 닫힘: right-0,         ‹  (ChevronLeft)
+패널 열림: right-[384px],   ›  (ChevronRight)
+```
+
+이쯤에서 "공시 섹션의 도구"라는 위치 부여가 좀 흐려졌는데, 어차피 페이지 본체와 패널이 분리되어 있고 패널은 여러 섹션의 옆에 떠 있는 형태라 페이지 레벨 트리거가 더 자연스러웠다. `DisclosuresSection`은 entities/stock에 두되, `SummarySlate`는 features/disclosure-summary로 분리한 것도 같은 흐름이다.
+
+각 공시 행 우측에는 "AI 요약" 버튼을 그대로 둔다. 이건 패널 토글이 아니라 공시 선택 트리거다.
+
+```
+[배지] 공시 제목 ......... 날짜  종목명  [공]  [AI 요약]
+```
+
+빈 상태 메시지도 정리했다. 우측 토글로 처음 패널을 열면 공시가 선택되지 않은 상태이고, 이때 "공시 목록에서 요약할 공시를 선택해주세요" 같은 안내가 뜬다.
+
+<img src="/static/images/velog/1ea02396-c687-4c0e-b58b-d8562830f1d9-image.png" alt="AI 요약 패널이 열린 종목 상세 페이지" width="700" />
+
+---
+
+## 에러 매핑 — 6종을 4그룹으로
+
+`SummarizeResult`의 5종 에러(`rate_limit` / `timeout` / `safety_blocked` / `empty_response` / `api_error`)와 `FetchDisclosureResult`의 `file_not_found`, 그리고 이번에 추가한 `not_summarizable`까지 합치면 7종이다. 여기에 클라이언트 측 `invalid_request`까지 더하면 8종.
+
+전부 다른 메시지로 노출하면 사용자 입장에서 의미 차이가 분간이 안 된다. 사용자 관점에서 묶일 수 있는 것은 묶었다.
+
+| 분류 | 처리 메시지 방향 | 재시도 버튼 |
+|---|---|---|
+| `file_not_found` | "원문이 보관되지 않은 공시입니다" | × |
+| `not_summarizable` | "정기보고서는 요약 대상이 아닙니다" | × |
+| `rate_limit` / `timeout` / `api_error` / `empty_response` | "지금은 요약을 시도하기 어렵습니다" | ○ |
+| `safety_blocked` | "이 공시는 자동 요약에서 제외되었습니다" | × |
+
+`rate_limit / timeout / api_error / empty_response`는 사용자 관점에서 "지금 시도하기 어려움"으로 동일한 의미라 한 메시지로 묶고, 재시도 버튼만 노출했다. `safety_blocked`는 별도 메시지인데 재시도해도 같은 결과라 버튼은 미노출. `file_not_found`와 `not_summarizable`은 데이터 상태라 재시도 자체가 의미 없다.
+
+투자 판단 도구가 아니라 문서 읽기 도구라는 포지셔닝은 메시지 톤에서 유지했다. "요약을 제공할 수 없습니다", "요약 대상이 아닙니다" 같은 표현으로, 사용자가 공시 자체에 문제가 있다고 오해하지 않도록 신경 썼다.
+
+---
+
+## 통합 후 발견한 간헐적 실패
+
+기능을 다 붙이고 검증을 도는데 좀 이상한 패턴이 보였다. 처음 "AI 요약" 버튼을 누르면 짧은 로딩 후 "지금은 요약을 시도하기 어렵습니다"가 뜨는 경우가 가끔 있었다. 같은 공시로 두세 번 시도하면 정상 응답이 왔다.
+
+기능 자체는 동작하는데 특정 시점에만 어긋나는 거라 원인이 단일하지 않을 가능성이 높았다. 분석 과정에서 잠재적 위험 2가지를 발견했고, 본질적인 원인 또한 파악했다.
+
+### 잠재 위험 1 — DB 호출이 try-catch 없이 노출돼 있었다
+
+API Route에서 `getDisclosureSummary`(캐시 조회)와 `saveDisclosureSummary`(캐시 저장)를 그대로 호출하고 있었다. 정상 흐름에서는 문제없는데, MySQL 커넥션 풀이 첫 요청 시점에 초기화 지연을 겪으면 throw가 발생할 수 있다. 그러면 Next.js가 500 HTML 페이지를 반환하게 된다.
+
+### 잠재 위험 2 — 클라이언트가 res.ok를 안 봤다
+
+500 HTML이 오면 클라이언트의 `res.json()`이 HTML을 JSON으로 파싱하려다 throw한다. 그게 catch로 떨어져 `api_error`로 분류된다. **DB 예외가 두 단계를 거쳐 "API 에러"로 둔갑하는 흐름**이었다.
+
+수정은 두 가지다.
+
+```ts
+// route.ts — DB 호출에 try-catch
+try {
+  const cached = await getDisclosureSummary(rcept_no);
+  if (cached) return Response.json({ ok: true, summary: cached });
+} catch {
+  return Response.json({
+    ok: false,
+    error: { kind: "api_error" },
+  });
+}
+
+// SummarySlate.tsx — res.ok 먼저 확인
+const res = await fetch("/api/disclosure-summary", { ... });
+if (!res.ok) {
+  setState({ kind: "error", reason: "api_error" });
+  return;
+}
+const data = await res.json();
+```
+
+잠재 위험이라 일단 수정은 했지만, 근본적인 원인은 네트워크를 뜯어보고 파악할 수 있었다.
+
+### 근본 원인 — Gemini 503 transient
+
+서버 콘솔을 보니 `503 UNAVAILABLE` 응답이 간헐적으로 찍히고 있었다. Gemini API의 일시적 부하 상황이었다. `api_error` 분기로 들어가긴 하는데, 사용자 입장에서는 "그냥 안 됨"으로 보인다. 1초만 기다렸다 다시 시도하면 대부분 성공하는 일시적 오류였다.
+
+이건 자동 재시도로 처리했다. transient 여부를 503/UNAVAILABLE로 한정하고, 1회만 재시도, 1초 대기.
+
+```ts
+const isTransient = (err: unknown): boolean => {
+  // 503 / UNAVAILABLE 패턴 매칭
+};
+
+// 첫 호출 → transient면 1초 대기 후 1회 재시도 → 실패하면 기존 에러 분기로 fallback
+```
+
+재시도해도 실패하면 기존 분기로 떨어지니 회귀는 없다. 사용자 메시지도 동일하다.
+
+세 수정을 적용한 후 같은 패턴이 사라졌다. 첫 번째 수정만으로 안 끝났던 이유는 원인이 동시에 둘 이상이었기 때문이다. 한 번에 하나씩 분리해서 봐야 정확히 잡힌다는 게 다시 확인됐다.
+
+---
+
+## 정리
+
+이번 작업은 예상보다 작업량이 많고 복잡했다.
+
+가장 신경 쓴 건 패널의 동작 모델이었다. 모달이 아니라 페이지와 공존하는 패널, 닫혀도 상태가 유지되는 패널, 페이지 이동 시에는 정리되는 패널. 이 세 동작을 동시에 만족시키는 구조를 잡는 게 핵심이었고, `modal={false}` + `showOverlay={false}` + 페이지 레벨 `useState` 조합으로 정리됐다. 물론 아직 정말 기초 틀만 잡아둬서 ui 보완은 크게 필요하다.
+
+그리고 검증 과정에서 발견한 간헐적 실패. 이건 기록할 가치가 있었다. 기능이 "되긴 되는데 가끔 안 되는" 상황은 원인이 단일하지 않을 가능성이 높고, 보이는 증상(`api_error`)이 실제 원인(Gemini 503 transient)과 다를 수 있다. 한 번에 하나씩 분리해서 보지 않으면 첫 수정으로 끝난 줄 알고 넘어가게 된다.
+
+---
+
+## 다음 작업
+
+[#017](https://velog.io/@dh82680/SlateKR-017-AI-공시-요약-기획-시작)에서 시작한 AI 공시 요약 트랙은 이번으로 일단락이다. 본문 추출, 캐시, Gemini 연동, 프롬프트 설계, 분류 보강, UI 통합. 5개 글에 걸쳐 정리됐다.
+
+남은 별건 이슈들은 메모로 두고 관련 사이클에서 다시 본다.
+
+- 거래소 행정 공시 분류 — 현재 `null`로 떨어지는 의도된 미분류. 별도 분류 축이 필요한지 검토
+- Gemini transient 분류 확장 — 현재는 503만 재시도. 429나 504도 transient로 분류할지는 운영 데이터 수집 후
+- 기타 ui 디자인 보완.
+
+다음 트랙은 EC2 배포다. collector cron 등록과 web 배포를 한 사이클에 묶을 수 있겠다. 로컬에서 확인 안 되는 환경 의존 항목들이 모일 거라, 진입 전 한 번 정리가 필요하다.
