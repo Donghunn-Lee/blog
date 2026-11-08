@@ -1,2 +1,2 @@
-# velog에서 변환한 글(scripts/migrate-velog.ts 출력)은 포맷하지 않는다
+# 글의 하드 브레이크·코드 블록 보호
 data/blog/

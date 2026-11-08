@@ -10,15 +10,14 @@
 ## 명령
 
 - `yarn start` dev · `yarn build` 빌드(+RSS) · `yarn serve -p 3001` 프로덕션 확인(3000은 slate-kr이 쓸 수 있음) · `yarn lint`
-- `yarn tsx scripts/migrate-velog.ts` — velog 백업(`../velog-archive`) 재변환. **`SERIES_RULES`의 9개 폴더와 `public/static/images/velog/`를 통째로 지우고 다시 쓴다.** 그 폴더에 손으로 쓴 글이 있으면 실행 금지
 
 ## 절대 규칙
 
 - `data/blog/` 아래 폴더·파일명 = URL. 변경 금지(이력서·README가 링크함)
-- 이전된 글(`data/blog/*`)은 `.prettierignore` 대상. 포맷·일괄 수정 금지 — 수정은 스크립트 규칙으로
+- `data/blog/`는 `.prettierignore` 대상(하드 브레이크·코드 블록 보호). 여러 글에 걸친 수정은 일회성 codemod(`yarn tsx`)로 하고 스크립트는 커밋하지 않는다
 - `app/tag-data.json`은 contentlayer가 생성(키 이름순 정렬). 손으로 수정 금지
 - `siteMetadata`의 `analytics`·`newsletter` 블록은 비워 두되 삭제 금지(크래시)
-- 새 글: `data/blog/<series>/<n>.mdx`, frontmatter `title/date/tags/summary/draft`. 이미지는 `public/static/images/<series>/` (`velog/`는 스크립트 소유)
+- 새 글: `data/blog/<series>/<n>.mdx`, frontmatter `title/date/tags/summary/draft`. 이미지는 `public/static/images/<series>/` (`velog/`는 이전 글 이미지)
 
 ## 커밋
 
