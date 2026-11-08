@@ -1,6 +1,6 @@
 ---
 title: "[SlateKR #028] 배포 시작 — EC2가 아닌 Vercel + Neon으로"
-date: 2026-05-12
+date: 2026-05-12T00:00:00Z
 lastmod: 2026-11-05
 summary: "사실은 훨씬 일찍 했어야 하는데, 손에 걸리는 게 만하서 미뤄오다가 지난 중간 점검을 계기로 바로 다음 작업에서 배포를 하기로 했다.그래서 이전 프로젝트에서 했던 것처럼 당연하게 EC2로 배포를 준비하려고 이것 저것 조금 알아보다가, 몇 가지 의문이 생기고 고민 끝에 "
 tags: ["PostgreSQL","Vercel","infrastructure","migration","neon","SlateKR"]
@@ -21,7 +21,7 @@ draft: false
 
 일단 한 발 물러서 생각해봤다. SlateKR은 프론트엔드 포트폴리오 프로젝트다. EC2에 서버를 직접 올려서 보여줄 수 있는 건 DevOps 역량인데, 이 프로젝트가 증명하려는 게 그건 아니다. Next.js니까 Vercel, serverless DB니까 Neon — **도구를 용도에 맞게 고르는 판단**이 오히려 더 적확할 수 있겠다는 생각에 도달했다.
 
-다른 프로젝트(AimTest)는 곧 프리티어 만료 때문에 Neon 마이그레이션이 예정돼 있었다. 두 프로젝트 인프라를 Vercel + Neon으로 통일하면 관리 포인트도 줄어든다. Vercel Hobby는 무료, Neon Launch 플랜 월 $5. 합쳐서 월 5달러. 합리적인 비용이다. 단순히 돈이 아까워서가 아니다.
+다른 프로젝트(AimTest)는 곧 프리티어 만료 때문에 Neon 마이그레이션이 예정돼 있었다. 두 프로젝트 인프라를 Vercel + Neon으로 통일하면 관리 포인트도 줄어든다. Vercel Hobby는 무료, Neon Launch 플랜 월 \$5. 합쳐서 월 5달러. 합리적인 비용이다. 단순히 돈이 아까워서가 아니다.
 
 ---
 

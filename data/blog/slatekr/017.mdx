@@ -1,6 +1,6 @@
 ---
 title: "[SlateKR #017] AI 공시 요약 설계 전 원문 구조 검증"
-date: 2026-04-30
+date: 2026-04-30T00:00:01Z
 lastmod: 2026-10-25
 summary: "collector 자동화가 끝나면서 MVP 본체에 필요한 데이터는 cron만 등록하면 매일 자동으로 채워지게 됐다. 다음으로 손댈 건 처음부터 차별화 기능으로 잡아둔 AI 공시 요약이다.기능 자체의 방향은 명확했다.주식을 잘 모르는 사람이 공시를 읽고자 할 때, 본 기"
 tags: ["Gemini","ai-summary","architecture-decision","dart-api","next.js","prompt engineering","SlateKR","xml parsing"]
@@ -181,7 +181,7 @@ RPD 20은 적은 한도다. 처음엔 이 숫자를 보고 무료 티어로는 �
 | 시나리오 | 1만 건 비용 |
 | --- | --- |
 | Gemini Flash 무료 (RPD 20) | **0원** |
-| Gemini Flash 유료 ($0.15 / $0.60 per MTok) | ~6,000원 |
+| Gemini Flash 유료 (\$0.15 / \$0.60 per MTok) | ~6,000원 |
 
 1만 건을 호출해도 6,000원 수준이다. 무료 티어 한도를 넘는 시점이 오면 유료로 넘어가면 되고, 그게 운영 비용 결정에 의미 있는 부담이 되지 않는다.
 

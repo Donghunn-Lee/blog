@@ -6,7 +6,7 @@ const siteMetadata = {
   description: '프론트엔드 개발 기록',
   language: 'ko',
   theme: 'system', // system, dark or light
-  siteUrl: 'https://TBD.vercel.app',
+  siteUrl: 'https://donghunn-lee.vercel.app',
   siteRepo: 'https://github.com/Donghunn-Lee/blog',
   siteLogo: `${process.env.BASE_PATH || ''}/static/images/logo.png`,
   socialBanner: `${process.env.BASE_PATH || ''}/static/images/twitter-card.png`,

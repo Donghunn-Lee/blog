@@ -125,6 +125,44 @@ export function toKstDateString(iso: string): string {
   return new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 10)
 }
 
+/**
+ * 규칙 8. 같은 KST 날짜 안에서 released_at(velog date) 오름차순 순번(0부터)을 매긴다.
+ * 템플릿은 date로만 정렬하고 같은 값이면 파일 순서를 유지하므로, 순번을 초 자리에 넣어 순서를 고정한다.
+ * 반환: sourceFile → 순번
+ */
+export function assignDateSequence(posts: readonly VelogPost[]): Map<string, number> {
+  const byDay = new Map<string, VelogPost[]>()
+  for (const post of posts) {
+    const day = toKstDateString(post.date)
+    const group = byDay.get(day)
+    if (group) group.push(post)
+    else byDay.set(day, [post])
+  }
+  const seq = new Map<string, number>()
+  for (const [day, group] of byDay) {
+    group.sort((a, b) => {
+      const diff = Date.parse(a.date) - Date.parse(b.date)
+      if (diff !== 0) return diff
+      return a.sourceFile < b.sourceFile ? -1 : a.sourceFile > b.sourceFile ? 1 : 0
+    })
+    if (group.length > 60) {
+      throw new Error(`${day}: 같은 날 글이 ${group.length}편이라 초 단위 순번(00~59)을 넘음`)
+    }
+    group.forEach((post, index) => seq.set(post.sourceFile, index))
+  }
+  return seq
+}
+
+/** 규칙 8. `YYYY-MM-DDT00:00:SSZ` — UTC·KST 어디서 빌드해도 같은 날짜가 찍히고, SS(순번)만 정렬에 쓰인다 */
+export function toDateStamp(kstDate: string, sequence: number): string {
+  return `${kstDate}T00:00:${String(sequence).padStart(2, '0')}Z`
+}
+
+/** 규칙 7. velog description에 노출되는 마크다운 백슬래시 이스케이프(`\[` 등) 제거 */
+export function cleanDescription(description: string): string {
+  return description.replace(DESCRIPTION_ESCAPE_RE, '$1')
+}
+
 /** 파일명: 제목의 `#N`(`#N-M`) → N, 없으면 제목 슬러그(소문자 · 공백→- · 기호 제거 · 한글 유지) */
 export function postFileStem(title: string): string {
   const numbered = /#(\d+(?:-\d+)?)/.exec(title)
@@ -169,6 +207,8 @@ export interface BodyTransformResult {
   /** 복사해야 할 원본 이미지 파일명 */
   imageFiles: Set<string>
   removed: RemovedImageRef[]
+  /** 규칙 6으로 이스케이프한 `$` 개수 */
+  dollarCount: number
 }
 
 interface TransformContext {
@@ -176,6 +216,7 @@ interface TransformContext {
   imageExists: (file: string) => boolean
   imageFiles: Set<string>
   removed: RemovedImageRef[]
+  dollarCount: number
 }
 
 const ALLOWED_HTML_TAG_PATTERN = 'img|div|span|br|p'
@@ -191,6 +232,10 @@ const UNSAFE_LT_RE = new RegExp(`<(?=\\S)(?!\\/?(?:${ALLOWED_HTML_TAG_PATTERN})\
 const IMG_CLOSE_RE = /<img\b([^>]*?)\s*\/?>/g
 const BR_CLOSE_RE = /<br\s*\/?>/g
 const STYLE_ATTR_RE = /style="([^"]*)"/g
+/** 규칙 6. remark-math가 `$…$`를 수식으로 잡으므로 prose의 `$`는 전부 이스케이프 (이 블로그에 수식은 없음) */
+const DOLLAR_RE = /\$/g
+/** 규칙 7. description의 `\` + `[ ] * _ # ~ > |` */
+const DESCRIPTION_ESCAPE_RE = /\\([[\]*_#~>|])/g
 
 /** `a: b; c-d: e` → `{{a: 'b', cD: 'e'}}` */
 export function cssToJsxStyle(css: string): string {
@@ -273,6 +318,12 @@ function transformProseChunk(
   // 5. style 문자열 → JSX 객체
   text = text.replace(STYLE_ATTR_RE, (_m, css: string) => `style=${cssToJsxStyle(css)}`)
 
+  // 6. `$` 이스케이프
+  text = text.replace(DOLLAR_RE, () => {
+    ctx.dollarCount += 1
+    return '\\$'
+  })
+
   return { text, removedRef }
 }
 
@@ -312,7 +363,13 @@ export function transformBody(
   sourceFile: string,
   imageExists: (file: string) => boolean
 ): BodyTransformResult {
-  const ctx: TransformContext = { sourceFile, imageExists, imageFiles: new Set(), removed: [] }
+  const ctx: TransformContext = {
+    sourceFile,
+    imageExists,
+    imageFiles: new Set(),
+    removed: [],
+    dollarCount: 0,
+  }
   const out: string[] = []
   let fence: OpenFence | null = null
 
@@ -349,7 +406,12 @@ export function transformBody(
     if (transformed !== null) out.push(transformed)
   }
 
-  return { body: out.join('\n'), imageFiles: ctx.imageFiles, removed: ctx.removed }
+  return {
+    body: out.join('\n'),
+    imageFiles: ctx.imageFiles,
+    removed: ctx.removed,
+    dollarCount: ctx.dollarCount,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,11 +425,14 @@ export interface ConvertedPost {
   content: string
   imageFiles: Set<string>
   removed: RemovedImageRef[]
+  /** 보고용: 규칙 6(`$` 이스케이프)·7(description 백슬래시 제거) 적용 여부 */
+  applied: { dollar: boolean; description: boolean }
 }
 
 export function convertPost(
   post: VelogPost,
-  imageExists: (file: string) => boolean
+  imageExists: (file: string) => boolean,
+  dateSequence: number
 ): ConvertedPost {
   const rule = SERIES_RULES.find((r) => r.name === post.seriesName)
   if (!rule) {
@@ -383,6 +448,7 @@ export function convertPost(
   const date = toKstDateString(post.date)
   const lastmod = toKstDateString(post.lastmod)
   const tags = buildTags(post.tags, rule.tag)
+  const summary = cleanDescription(post.description)
 
   let images: string[] | null = null
   if (post.thumbnail !== null && post.thumbnail.startsWith(SRC_IMAGE_URL_PREFIX)) {
@@ -395,9 +461,13 @@ export function convertPost(
     }
   }
 
-  const fm: string[] = ['---', `title: ${JSON.stringify(post.title)}`, `date: ${date}`]
+  const fm: string[] = [
+    '---',
+    `title: ${JSON.stringify(post.title)}`,
+    `date: ${toDateStamp(date, dateSequence)}`,
+  ]
   if (lastmod !== date) fm.push(`lastmod: ${lastmod}`)
-  if (post.description !== '') fm.push(`summary: ${JSON.stringify(post.description)}`)
+  if (summary !== '') fm.push(`summary: ${JSON.stringify(summary)}`)
   fm.push(`tags: ${JSON.stringify(tags)}`)
   if (images !== null) fm.push(`images: ${JSON.stringify(images)}`)
   fm.push('draft: false', '---')
@@ -412,6 +482,7 @@ export function convertPost(
     content,
     imageFiles,
     removed,
+    applied: { dollar: transformed.dollarCount > 0, description: summary !== post.description },
   }
 }
 
@@ -430,16 +501,21 @@ export function migrate(): void {
   }
 
   // 1) 전부 메모리에서 변환·검증 (충돌/미지의 시리즈면 아무것도 쓰지 않고 중단)
+  const posts = sourceFiles.map((file) =>
+    parseVelogMarkdown(file, fs.readFileSync(path.join(SRC_CONTENT_DIR, file), 'utf8'))
+  )
+  const dateSequence = assignDateSequence(posts)
   const converted: ConvertedPost[] = []
   const seen = new Map<string, string>() // "folder/stem" → sourceFile
   const collisions: string[] = []
-  for (const file of sourceFiles) {
-    const raw = fs.readFileSync(path.join(SRC_CONTENT_DIR, file), 'utf8')
-    const post = convertPost(parseVelogMarkdown(file, raw), imageExists)
+  for (const source of posts) {
+    const sequence = dateSequence.get(source.sourceFile)
+    if (sequence === undefined) throw new Error(`${source.sourceFile}: 날짜 순번 없음`)
+    const post = convertPost(source, imageExists, sequence)
     const key = `${post.folder}/${post.stem}`
     const prev = seen.get(key)
-    if (prev !== undefined) collisions.push(`${key}.mdx ← "${prev}" / "${file}"`)
-    seen.set(key, file)
+    if (prev !== undefined) collisions.push(`${key}.mdx ← "${prev}" / "${source.sourceFile}"`)
+    seen.set(key, source.sourceFile)
     converted.push(post)
   }
   if (collisions.length > 0) {
@@ -477,6 +553,19 @@ export function migrate(): void {
   console.log(`제거된 이미지 참조: ${removed.length}건`)
   for (const r of removed) console.log(`  [${r.kind}] ${r.sourceFile} → ${r.file}`)
   console.log('파일명 충돌: 없음')
+  const dayGroups = new Map<string, number>()
+  for (const post of posts) {
+    const day = toKstDateString(post.date)
+    dayGroups.set(day, (dayGroups.get(day) ?? 0) + 1)
+  }
+  const multiDays = [...dayGroups.values()].filter((n) => n > 1)
+  console.log(`규칙 6 ($ 이스케이프) 적용: ${converted.filter((p) => p.applied.dollar).length}편`)
+  console.log(
+    `규칙 7 (description 백슬래시 제거) 적용: ${converted.filter((p) => p.applied.description).length}편`
+  )
+  console.log(
+    `규칙 8 (date 순번) 적용: ${converted.length}편 — 같은 날 그룹 ${multiDays.length}개(${multiDays.reduce((a, b) => a + b, 0)}편), 최대 ${Math.max(0, ...multiDays)}편/일`
+  )
 }
 
 if (require.main === module) {
