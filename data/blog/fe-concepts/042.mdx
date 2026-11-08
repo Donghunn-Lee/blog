@@ -19,7 +19,7 @@ draft: false
 
 `useEffect` 안에서 `fetch`를 부르고, 위에 로딩 스피너를 깔고, 에러를 `useState`로 들고 있던 시절이 있다. 데이터를 가져오는 방법은 사실상 하나였다. 컴포넌트가 마운트되면 요청을 보내고, 응답이 오면 그린다. fetch를 어디서 부르든 결과는 같았다.
 
-App Router로 넘어오면서 이 단순함이 깨졌다. [#039 React Server Components](https://velog.io/@dh82680/Next.js-React-Server-Components-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-039)에서 본 것처럼 서버 컴포넌트에서 데이터를 직접 `await`할 수 있게 됐고, [#041 Streaming SSR](https://velog.io/@dh82680/Next.js-Streaming-SSR%EA%B3%BC-Suspense-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-041)에서 본 것처럼 그 데이터를 기다리는 동안 화면 일부를 먼저 흘려보낼 수도 있게 됐다. 다만 선택지가 늘었다는 건 잘못 선택할 가능성 또한 늘었다는 얘기다.
+App Router로 넘어오면서 이 단순함이 깨졌다. [#039 React Server Components](/blog/fe-concepts/039/)에서 본 것처럼 서버 컴포넌트에서 데이터를 직접 `await`할 수 있게 됐고, [#041 Streaming SSR](/blog/fe-concepts/041/)에서 본 것처럼 그 데이터를 기다리는 동안 화면 일부를 먼저 흘려보낼 수도 있게 됐다. 다만 선택지가 늘었다는 건 잘못 선택할 가능성 또한 늘었다는 얘기다.
 
 잘못된 선택은 보통 이렇게 드러난다. 필요 없는 곳에 스피너가 깜빡일 때. 같은 데이터를 컴포넌트 세 곳에서 각자 fetch해서 네트워크 탭에 동일 요청이 세 번 찍힐 때. 그리고 가장 흔한 것 — 분명 DB는 바꿨는데 화면은 옛날 데이터일 때, 혹은 반대로 안 바뀌어도 되는 데이터가 매번 새로 불러와질 때.
 
@@ -84,7 +84,7 @@ SWR은 API 표면이 작아서 빠르게 생산성이 난다. TanStack Query는 
 
 검색해서 나온 글이 어느 버전 기준인지 확인하지 않으면, "분명 공식 문서대로 했는데 동작이 다른" 상황을 만나게 될 수 있다. Next.js 14를 15로 올렸더니 모든 페이지가 느려졌다는 사례가 흔한 이유가 이것이다. fetch가 더 이상 자동 캐싱되지 않아 매 요청마다 origin을 때리기 때문이다.
 
-가장 최신인 Next.js 16은 [#017 HTTP 캐싱](https://velog.io/@dh82680/HTTP-%EC%BA%90%EC%8B%B1-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-017)에서 본 브라우저 ↔ 서버 협상 캐시와는 또 다른 층의 이야기다. 한 번의 요청이 거치는 캐시 레이어를 안쪽부터 늘어놓으면 다음과 같다.
+가장 최신인 Next.js 16은 [#017 HTTP 캐싱](/blog/fe-concepts/017/)에서 본 브라우저 ↔ 서버 협상 캐시와는 또 다른 층의 이야기다. 한 번의 요청이 거치는 캐시 레이어를 안쪽부터 늘어놓으면 다음과 같다.
 
 ````text
 [ 한 번의 요청이 거치는 캐시 레이어 — Next.js 16, cacheComponents 기준 ]
@@ -101,7 +101,7 @@ SWR은 API 표면이 작아서 빠르게 생산성이 난다. TanStack Query는 
 
 - **Request Memoization** 은 같은 URL·옵션의 GET fetch를 한 번의 서버 렌더 동안 자동으로 한 번만 실행한다. 컴포넌트 세 곳에서 같은 fetch를 불러도 요청은 하나다. 단 **요청 하나를 처리하는 동안만** 유효하다.
 - **Data Cache** 는 Next.js 16의 `use cache` 디렉티브로 만든다. 컴파일러가 인자와 클로저 값으로 캐시 키를 자동 생성하고, 요청 사이를 넘어 결과가 지속된다.
-- **PPR static shell** 은 [#041 Streaming SSR](https://velog.io/@dh82680/Next.js-Streaming-SSR%EA%B3%BC-Suspense-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-041)에서 본 구조가 캐싱과 합쳐진 형태다. 캐시된 셸은 즉시, 동적 구간은 Suspense로 스트리밍된다.
+- **PPR static shell** 은 [#041 Streaming SSR](/blog/fe-concepts/041/)에서 본 구조가 캐싱과 합쳐진 형태다. 캐시된 셸은 즉시, 동적 구간은 Suspense로 스트리밍된다.
 
 맨 아래 라이브러리 캐시가 위 서버 레이어들과 **다른 메모리에 산다**는 게 핵심이다. 이 분리를 놓치면 무효화에서 막힌다.
 
@@ -131,7 +131,7 @@ export async function updateProduct(/* ... */) {
 }
 ````
 
-[#040 Server Actions](https://velog.io/@dh82680/Next.js-Server-Actions와-폼-처리-FE-개념-탐구-040)에서 다룬 그 흐름 위에 `revalidateTag`가 얹힌다.
+[#040 Server Actions](/blog/fe-concepts/040/)에서 다룬 그 흐름 위에 `revalidateTag`가 얹힌다.
 
 **클라이언트** — 라이브러리가 들고 있는 사본은 라이브러리 API로 무효화한다.
 

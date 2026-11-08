@@ -51,6 +51,13 @@ export const SERIES_RULES: readonly SeriesRule[] = [
   { name: null, folder: 'etc', tag: null, expected: 2 },
 ]
 
+/** 규칙 9. slug 일치·시리즈 번호로 못 찾는 옛 velog slug → 새 블로그 경로 */
+export const LEGACY_SLUG_MAP: ReadonlyMap<string, string> = new Map([
+  ['600줄의-God-Component-해체-책임-분리와-Hub-패턴', '/blog/aimtest/14/'],
+  // AimTest #02의 옛 slug
+  ['맵-구현', '/blog/aimtest/02/'],
+])
+
 // ---------------------------------------------------------------------------
 // 입력 frontmatter 파싱 (라인 단위 regex — YAML 라이브러리 사용 안 함)
 // ---------------------------------------------------------------------------
@@ -58,6 +65,7 @@ export const SERIES_RULES: readonly SeriesRule[] = [
 export interface VelogPost {
   sourceFile: string
   title: string
+  slug: string
   description: string
   date: string
   lastmod: string
@@ -90,9 +98,10 @@ export function parseVelogMarkdown(sourceFile: string, raw: string): VelogPost {
   const title = pick(/^title: "(.*)"$/)
   const date = pick(/^date: (\S+)$/)
   const lastmod = pick(/^lastmod: (\S+)$/)
+  const slug = pick(/^slug: (\S+)$/)
   const tagsRaw = pick(/^tags: (.*)$/)
-  if (title === null || date === null || lastmod === null || tagsRaw === null) {
-    throw new Error(`${sourceFile}: title/date/lastmod/tags 중 누락`)
+  if (title === null || date === null || lastmod === null || slug === null || tagsRaw === null) {
+    throw new Error(`${sourceFile}: title/date/lastmod/slug/tags 중 누락`)
   }
   const tags: unknown = JSON.parse(tagsRaw)
   if (!isStringArray(tags)) throw new Error(`${sourceFile}: tags가 문자열 배열이 아님`)
@@ -100,6 +109,7 @@ export function parseVelogMarkdown(sourceFile: string, raw: string): VelogPost {
   return {
     sourceFile,
     title,
+    slug,
     description: pick(/^description: "(.*)"$/) ?? '',
     date,
     lastmod,
@@ -163,6 +173,16 @@ export function cleanDescription(description: string): string {
   return description.replace(DESCRIPTION_ESCAPE_RE, '$1')
 }
 
+export function seriesRuleOf(post: VelogPost): SeriesRule {
+  const rule = SERIES_RULES.find((r) => r.name === post.seriesName)
+  if (!rule) {
+    throw new Error(
+      `표에 없는 series.name: ${JSON.stringify(post.seriesName)} (${post.sourceFile})`
+    )
+  }
+  return rule
+}
+
 /** 파일명: 제목의 `#N`(`#N-M`) → N, 없으면 제목 슬러그(소문자 · 공백→- · 기호 제거 · 한글 유지) */
 export function postFileStem(title: string): string {
   const numbered = /#(\d+(?:-\d+)?)/.exec(title)
@@ -193,6 +213,118 @@ export function buildTags(velogTags: string[], seriesTag: string | null): string
 }
 
 // ---------------------------------------------------------------------------
+// 규칙 9. velog 내부 링크 → 새 블로그 경로
+// ---------------------------------------------------------------------------
+
+/** `https://velog.io/@dh82680<path>`. 링크 대상 맨 앞에 붙은 `#`(`](#https://…)`, velog에서도 깨진 앵커)도 함께 치환 */
+const VELOG_LINK_RE =
+  /(?:(?<=\]\()#)?https:\/\/velog\.io\/@dh82680(\/[^\s)"'<>\]]*)?(?=[\s)"'<>\]]|$)/g
+/** 위 패턴에 안 맞는 같은 주소(`ttps://` 같은 스킴 오타 등) — 치환하지 않고 보고만 */
+const VELOG_STRAY_RE = /[A-Za-z]*:?\/*velog\.io\/@dh82680[^\s)"'<>\]]*/g
+const FE_CONCEPTS_SLUG_RE = /FE-개념-탐구-(\d{3})/
+const SLATEKR_SLUG_RE = /^SlateKR-(\d{3})/
+const AIMTEST_SLUG_RE = /^AimTest-(\d{2})/
+
+/** 적용 순서대로, 요약 출력 표기 */
+const VELOG_LINK_KINDS = [
+  ['posts', '/posts'],
+  ['home', '홈'],
+  ['slug', 'slug 일치'],
+  ['fe-concepts', 'FE 개념 탐구 번호'],
+  ['slatekr', 'SlateKR 번호'],
+  ['aimtest', 'AimTest 번호'],
+  ['legacy', 'LEGACY_SLUG_MAP'],
+] as const
+
+export type VelogLinkKind = (typeof VELOG_LINK_KINDS)[number][0]
+
+/** kind가 null이면 원본 유지 */
+export type VelogLinkResolution =
+  | { kind: VelogLinkKind; to: string }
+  | { kind: null; reason: string }
+
+export type VelogLinkRef = { sourceFile: string; url: string } & VelogLinkResolution
+
+export interface VelogLinkIndex {
+  /** 백업 frontmatter slug → 출력 경로 `/blog/<folder>/<n>/` */
+  bySlug: ReadonlyMap<string, string>
+  /** 이번 실행에서 생성하는 mdx의 출력 경로 */
+  outputPaths: ReadonlySet<string>
+}
+
+export function buildVelogLinkIndex(posts: readonly VelogPost[]): VelogLinkIndex {
+  const bySlug = new Map<string, string>()
+  const outputPaths = new Set<string>()
+  for (const post of posts) {
+    const outputPath = `/blog/${seriesRuleOf(post).folder}/${postFileStem(post.title)}/`
+    bySlug.set(post.slug, outputPath)
+    outputPaths.add(outputPath)
+  }
+  return { bySlug, outputPaths }
+}
+
+function tryDecodeURIComponent(text: string): string | null {
+  try {
+    return decodeURIComponent(text)
+  } catch {
+    return null
+  }
+}
+
+/** 규칙 9 표를 위에서부터 적용. 글 경로가 나오면 그 mdx가 생성되는지까지 확인 */
+export function resolveVelogPath(urlPath: string, index: VelogLinkIndex): VelogLinkResolution {
+  const decoded = tryDecodeURIComponent(urlPath)
+  if (decoded === null) return { kind: null, reason: '퍼센트 인코딩 해석 실패' }
+  if (decoded === '/posts') return { kind: 'posts', to: '/blog/' }
+  if (decoded === '' || decoded === '/') return { kind: 'home', to: '/' }
+
+  const toPost = (kind: VelogLinkKind, to: string): VelogLinkResolution =>
+    index.outputPaths.has(to) ? { kind, to } : { kind: null, reason: `생성된 mdx 없음 ${to}` }
+  const slug = decoded.slice(1)
+  const bySlug = index.bySlug.get(slug)
+  if (bySlug !== undefined) return toPost('slug', bySlug)
+  const fe = FE_CONCEPTS_SLUG_RE.exec(slug)
+  if (fe) return toPost('fe-concepts', `/blog/fe-concepts/${fe[1]}/`)
+  const slatekr = SLATEKR_SLUG_RE.exec(slug)
+  if (slatekr) return toPost('slatekr', `/blog/slatekr/${slatekr[1]}/`)
+  const aimtest = AIMTEST_SLUG_RE.exec(slug)
+  if (aimtest) return toPost('aimtest', `/blog/aimtest/${aimtest[1]}/`)
+  const legacy = LEGACY_SLUG_MAP.get(slug)
+  if (legacy !== undefined) return toPost('legacy', legacy)
+  return { kind: null, reason: '맞는 규칙 없음' }
+}
+
+interface LinkContext {
+  sourceFile: string
+  linkIndex: VelogLinkIndex
+  links: VelogLinkRef[]
+}
+
+/** prose 조각의 velog 내부 링크 치환. 못 푼 링크와 패턴 밖 주소는 그대로 두고 ctx.links에 남긴다 */
+function rewriteVelogLinks(text: string, ctx: LinkContext): string {
+  const rewritten = text.replace(VELOG_LINK_RE, (url: string, urlPath: string | undefined) => {
+    const resolved = resolveVelogPath(urlPath ?? '', ctx.linkIndex)
+    ctx.links.push({ sourceFile: ctx.sourceFile, url, ...resolved })
+    return resolved.kind === null ? url : resolved.to
+  })
+  for (const m of text.replace(VELOG_LINK_RE, '').matchAll(VELOG_STRAY_RE)) {
+    ctx.links.push({ sourceFile: ctx.sourceFile, url: m[0], kind: null, reason: '패턴 밖 주소' })
+  }
+  return rewritten
+}
+
+/** description: 인라인 코드 밖에만 규칙 9 적용 */
+function rewriteDescriptionLinks(description: string, ctx: LinkContext): string {
+  let out = ''
+  let last = 0
+  for (const m of description.matchAll(INLINE_CODE_RE)) {
+    out += rewriteVelogLinks(description.slice(last, m.index), ctx) + m[0]
+    last = m.index + m[0].length
+  }
+  return out + rewriteVelogLinks(description.slice(last), ctx)
+}
+
+// ---------------------------------------------------------------------------
 // 본문 변환
 // ---------------------------------------------------------------------------
 
@@ -209,10 +341,11 @@ export interface BodyTransformResult {
   removed: RemovedImageRef[]
   /** 규칙 6으로 이스케이프한 `$` 개수 */
   dollarCount: number
+  /** 규칙 9로 만난 velog 내부 링크 (치환 + 원본 유지) */
+  links: VelogLinkRef[]
 }
 
-interface TransformContext {
-  sourceFile: string
+interface TransformContext extends LinkContext {
   imageExists: (file: string) => boolean
   imageFiles: Set<string>
   removed: RemovedImageRef[]
@@ -324,6 +457,9 @@ function transformProseChunk(
     return '\\$'
   })
 
+  // 9. velog 내부 링크 → 새 블로그 경로
+  text = rewriteVelogLinks(text, ctx)
+
   return { text, removedRef }
 }
 
@@ -361,10 +497,13 @@ function countQuoteDepth(prefix: string): number {
 export function transformBody(
   body: string,
   sourceFile: string,
-  imageExists: (file: string) => boolean
+  imageExists: (file: string) => boolean,
+  linkIndex: VelogLinkIndex
 ): BodyTransformResult {
   const ctx: TransformContext = {
     sourceFile,
+    linkIndex,
+    links: [],
     imageExists,
     imageFiles: new Set(),
     removed: [],
@@ -411,6 +550,7 @@ export function transformBody(
     imageFiles: ctx.imageFiles,
     removed: ctx.removed,
     dollarCount: ctx.dollarCount,
+    links: ctx.links,
   }
 }
 
@@ -425,6 +565,8 @@ export interface ConvertedPost {
   content: string
   imageFiles: Set<string>
   removed: RemovedImageRef[]
+  /** 보고용: 규칙 9로 만난 velog 내부 링크 (본문 + description) */
+  links: VelogLinkRef[]
   /** 보고용: 규칙 6(`$` 이스케이프)·7(description 백슬래시 제거) 적용 여부 */
   applied: { dollar: boolean; description: boolean }
 }
@@ -432,23 +574,25 @@ export interface ConvertedPost {
 export function convertPost(
   post: VelogPost,
   imageExists: (file: string) => boolean,
-  dateSequence: number
+  dateSequence: number,
+  linkIndex: VelogLinkIndex
 ): ConvertedPost {
-  const rule = SERIES_RULES.find((r) => r.name === post.seriesName)
-  if (!rule) {
-    throw new Error(
-      `표에 없는 series.name: ${JSON.stringify(post.seriesName)} (${post.sourceFile})`
-    )
-  }
+  const rule = seriesRuleOf(post)
 
-  const transformed = transformBody(post.body, post.sourceFile, imageExists)
+  const transformed = transformBody(post.body, post.sourceFile, imageExists, linkIndex)
   const imageFiles = new Set(transformed.imageFiles)
   const removed = [...transformed.removed]
+  const links = [...transformed.links]
 
   const date = toKstDateString(post.date)
   const lastmod = toKstDateString(post.lastmod)
   const tags = buildTags(post.tags, rule.tag)
-  const summary = cleanDescription(post.description)
+  const description = cleanDescription(post.description)
+  const summary = rewriteDescriptionLinks(description, {
+    sourceFile: post.sourceFile,
+    linkIndex,
+    links,
+  })
 
   let images: string[] | null = null
   if (post.thumbnail !== null && post.thumbnail.startsWith(SRC_IMAGE_URL_PREFIX)) {
@@ -482,7 +626,8 @@ export function convertPost(
     content,
     imageFiles,
     removed,
-    applied: { dollar: transformed.dollarCount > 0, description: summary !== post.description },
+    links,
+    applied: { dollar: transformed.dollarCount > 0, description: description !== post.description },
   }
 }
 
@@ -505,13 +650,14 @@ export function migrate(): void {
     parseVelogMarkdown(file, fs.readFileSync(path.join(SRC_CONTENT_DIR, file), 'utf8'))
   )
   const dateSequence = assignDateSequence(posts)
+  const linkIndex = buildVelogLinkIndex(posts)
   const converted: ConvertedPost[] = []
   const seen = new Map<string, string>() // "folder/stem" → sourceFile
   const collisions: string[] = []
   for (const source of posts) {
     const sequence = dateSequence.get(source.sourceFile)
     if (sequence === undefined) throw new Error(`${source.sourceFile}: 날짜 순번 없음`)
-    const post = convertPost(source, imageExists, sequence)
+    const post = convertPost(source, imageExists, sequence, linkIndex)
     const key = `${post.folder}/${post.stem}`
     const prev = seen.get(key)
     if (prev !== undefined) collisions.push(`${key}.mdx ← "${prev}" / "${source.sourceFile}"`)
@@ -566,6 +712,28 @@ export function migrate(): void {
   console.log(
     `규칙 8 (date 순번) 적용: ${converted.length}편 — 같은 날 그룹 ${multiDays.length}개(${multiDays.reduce((a, b) => a + b, 0)}편), 최대 ${Math.max(0, ...multiDays)}편/일`
   )
+  const linkCounts = new Map<VelogLinkKind, number>()
+  const linkPosts = new Set<string>()
+  const keptLinks: string[] = []
+  let anchorLinks = 0
+  for (const link of converted.flatMap((p) => p.links)) {
+    if (link.kind === null) {
+      const url = tryDecodeURIComponent(link.url) ?? link.url
+      keptLinks.push(`  [${link.reason}] ${link.sourceFile} → ${url}`)
+      continue
+    }
+    linkCounts.set(link.kind, (linkCounts.get(link.kind) ?? 0) + 1)
+    linkPosts.add(link.sourceFile)
+    if (link.url.startsWith('#')) anchorLinks += 1
+  }
+  const linkTotal = [...linkCounts.values()].reduce((a, b) => a + b, 0)
+  const byKind = VELOG_LINK_KINDS.map(([kind, label]) => `${label} ${linkCounts.get(kind) ?? 0}`)
+  console.log(
+    `규칙 9 (velog 내부 링크) 치환: ${linkTotal}건 / ${linkPosts.size}편 — ${byKind.join(', ')}` +
+      (anchorLinks > 0 ? ` (\`](#https://…)\` 앵커 접두 포함 ${anchorLinks}건)` : '')
+  )
+  console.log(`규칙 9 원본 유지: ${keptLinks.length}건`)
+  for (const line of keptLinks) console.log(line)
 }
 
 if (require.main === module) {

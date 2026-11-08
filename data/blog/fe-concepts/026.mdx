@@ -139,7 +139,7 @@ Provider가 없으면 `createContext`에 넘긴 fallback 값이 반환된다.
 
 React가 정확히 어떻게 판단할까. Provider의 `value`를 이전 렌더의 value와 **`Object.is`로 비교**하고, 다르면 그 Context를 구독하는 모든 자식을 리렌더링 대상에 추가한다.
 
-여기서 [#025 React 렌더링 최적화](https://velog.io/@dh82680/React-렌더링-최적화-FE-개념-탐구-025)와 자연스럽게 이어진다. 그 글에서 "Context 값 변경은 memo로 막을 수 없다"고 짧게 언급했는데, 이유는 단순하다.
+여기서 [#025 React 렌더링 최적화](/blog/fe-concepts/025/)와 자연스럽게 이어진다. 그 글에서 "Context 값 변경은 memo로 막을 수 없다"고 짧게 언급했는데, 이유는 단순하다.
 
 ```tsx
 const ChildBox = memo(function ChildBox() {
@@ -236,7 +236,7 @@ Provider 자체의 비용은 거의 없다. 단순한 메타데이터 전달이�
 이제 notifications가 바뀌어도 user나 theme을 구독하는 컴포넌트는 영향받지 않는다.
 **한 Context는 한 가지 책임만 갖게 한다.** 이름만 봐도 무엇이 들어있는지 알 수 있어야 좋다.
 
-이 발상은 [#025](https://velog.io/@dh82680/React-렌더링-최적화-FE-개념-탐구-025)의 "도구보다 구조를 먼저"와 같은 결이다. memo/useMemo로 가리는 게 아니라 **처음부터 영향 범위가 좁은 구조로 만든다.**
+이 발상은 [#025](/blog/fe-concepts/025/)의 "도구보다 구조를 먼저"와 같은 결이다. memo/useMemo로 가리는 게 아니라 **처음부터 영향 범위가 좁은 구조로 만든다.**
 
 ---
 

@@ -68,7 +68,7 @@ componentWillUnmount() {
 
 **셋째, `this` 바인딩.**
 
-[#004 this 바인딩](https://velog.io/@dh82680/JavaScript-this-%EB%B0%94%EC%9D%B8%EB%94%A9-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-004)에서 다뤘듯이, JavaScript의 `this`는 호출 방식으로 결정된다.
+[#004 this 바인딩](/blog/fe-concepts/004/)에서 다뤘듯이, JavaScript의 `this`는 호출 방식으로 결정된다.
 클래스 메서드를 이벤트 핸들러로 그냥 넘기면 `this`가 사라지기 때문에, 매번 `bind`를 걸거나 화살표 함수로 정의해야 했다.
 보일러플레이트가 늘고, 빠뜨리면 런타임 에러가 났다.
 
@@ -94,7 +94,7 @@ Hooks가 가져온 변화는 두 가지다.
 
 ## React는 Hook을 호출 순서로 식별한다
 
-함수 컴포넌트는 매 렌더마다 **함수가 처음부터 다시 실행**된다 ([#021](https://velog.io/@dh82680/React%EC%9D%98-%EB%A0%8C%EB%8D%94%EB%A7%81%EC%9D%B4%EB%9E%80-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-021) 참조).
+함수 컴포넌트는 매 렌더마다 **함수가 처음부터 다시 실행**된다 ([#021](/blog/fe-concepts/021/) 참조).
 그런데 `useState(0)`을 호출했을 때, React는 어떻게 이 컴포넌트가 이전 렌더에서 어떤 값을 들고 있었는지 기억할까?
 
 답은 단순하다. **React가 컴포넌트 외부에서 Hook들을 연결 리스트로 들고 있다.**
@@ -200,7 +200,7 @@ function useUser(userId) {
 
 ## Hooks와 클로저, 그리고 stale closure
 
-Hook이 동작하는 토대는 직전 글 [#023 State와 Props](#https://velog.io/@dh82680/React-State%EC%99%80-Props-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-023)에서 다룬 "state as a snapshot" 모델이다.
+Hook이 동작하는 토대는 직전 글 [#023 State와 Props](/blog/fe-concepts/023/)에서 다룬 "state as a snapshot" 모델이다.
 함수 컴포넌트는 매 렌더마다 새로운 함수 실행 컨텍스트를 만들고, 그 안의 모든 변수는 **그 렌더 시점에 캡처된 클로저** 안에 갇힌다.
 
 이 모델이 만드는 유명한 함정이 **stale closure**다.

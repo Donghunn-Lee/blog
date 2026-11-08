@@ -178,7 +178,7 @@ const user: User = { id: '1', name: 'A', email: 'a@b.c' };
 
 JS였다면 이 변경은 **조용히 모든 곳을 깨뜨린다.** 새 필드가 필요한데 안 넣어준 코드들은 그냥 `undefined`를 흘리고, 어딘가에서 그게 문제가 된 후에야 발견된다. TS는 이 종류의 변경을 **컴파일 시점에 전수 검사**한다.
 
-이게 [#023 React State와 Props](https://velog.io/@dh82680/React-State%EC%99%80-Props-FE-%EA%B0%9C%EB%85%90-%ED%83%90%EA%B5%AC-023)에서 다룬 "props 계약"과도 연결된다. 컴포넌트가 받는 props의 형태가 타입으로 정의되어 있으면, 부모 컴포넌트가 잘못된 props를 넘길 때 컴파일 시점에 잡힌다. props가 무엇인지 매번 코드를 따라가서 확인할 필요가 없어진다.
+이게 [#023 React State와 Props](/blog/fe-concepts/023/)에서 다룬 "props 계약"과도 연결된다. 컴포넌트가 받는 props의 형태가 타입으로 정의되어 있으면, 부모 컴포넌트가 잘못된 props를 넘길 때 컴파일 시점에 잡힌다. props가 무엇인지 매번 코드를 따라가서 확인할 필요가 없어진다.
 
 ### 2. IDE 경험 — 자동완성과 리팩토링
 

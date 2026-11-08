@@ -9,7 +9,7 @@ draft: false
 
 #  
 
-이번 작업은 [#038](https://velog.io/@dh82680/SlateKR-038-DART-단위-메타데이터-부재와-EPS-누락-인치-로그와-fallback-추가)에서 다단계 폴백을 추가하고 6종목 샘플로 검증한 뒤, affected_tickers.txt에 모인 780종목을 전체 재적재하는 데서 시작했다. 재적재가 끝나면 NULL 비율이 얼마나 떨어지는지 측정하고, 다음 트랙으로 넘어가는 게 원래 계획이었다.
+이번 작업은 [#038](/blog/slatekr/038/)에서 다단계 폴백을 추가하고 6종목 샘플로 검증한 뒤, affected_tickers.txt에 모인 780종목을 전체 재적재하는 데서 시작했다. 재적재가 끝나면 NULL 비율이 얼마나 떨어지는지 측정하고, 다음 트랙으로 넘어가는 게 원래 계획이었다.
 
 근데 측정 결과를 보다가 다시 멈췄다.
 
@@ -128,7 +128,7 @@ DB 스키마부터 다시 확인했다. `eps integer`, `bps integer`. 처음 설
 - `real`(float4) → 부동소수점 오차 위험. 금융 도메인엔 부적합.
 - `numeric(15, 4)` → **소수점 보존, PostgreSQL 표준. 적합.**
 
-`numeric(15, 4)`로 갔다. 정수부 11자리까지 수용하므로 [#032](https://velog.io/@dh82680/SlateKR-032-재무-데이터-정확성-계정과목-교체부터-nonfiler-복구)에서 한 번 터졌던 075580 같은 overflow 케이스(원래 B8 항목)도 같이 해결된다. 마이그레이션 자체는 비파괴적이다. PostgreSQL이 INTEGER → NUMERIC을 암시적 캐스팅으로 처리해서 기존 정수 값이 그대로 변환된다.
+`numeric(15, 4)`로 갔다. 정수부 11자리까지 수용하므로 [#032](/blog/slatekr/032/)에서 한 번 터졌던 075580 같은 overflow 케이스(원래 B8 항목)도 같이 해결된다. 마이그레이션 자체는 비파괴적이다. PostgreSQL이 INTEGER → NUMERIC을 암시적 캐스팅으로 처리해서 기존 정수 값이 그대로 변환된다.
 
 ```sql
 ALTER TABLE financial_statements

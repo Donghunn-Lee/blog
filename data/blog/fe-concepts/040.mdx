@@ -16,7 +16,7 @@ draft: false
 
 ## 폼 하나를 만들기 위해 짜야 했던 것
 
-게시글 작성 폼을 만든다고 해보자. [#038 App Router](https://velog.io/@dh82680/Next.js-Pages-Router와-App-Router-FE-개념-탐구-038)까지의 모델에서, 우리가 짜야 했던 코드는 두 곳에 나뉘어 있었다.
+게시글 작성 폼을 만든다고 해보자. [#038 App Router](/blog/fe-concepts/038/)까지의 모델에서, 우리가 짜야 했던 코드는 두 곳에 나뉘어 있었다.
 
 서버 측에는 API Route 핸들러가 있다.
 
@@ -182,7 +182,7 @@ export async function createPost(formData: FormData) {
 }
 ```
 
-`revalidatePath`가 호출되면 그 경로에 매핑된 [#039 RSC](https://velog.io/@dh82680/Next.js-React-Server-Components-FE-개념-탐구-039) 트리가 다음 요청 시 다시 실행된다. 클라이언트는 "뭘 다시 받아야 하는지" 알 필요가 없다.
+`revalidatePath`가 호출되면 그 경로에 매핑된 [#039 RSC](/blog/fe-concepts/039/) 트리가 다음 요청 시 다시 실행된다. 클라이언트는 "뭘 다시 받아야 하는지" 알 필요가 없다.
 
 거기에 React 19의 두 훅이 상태 관리 보일러플레이트를 마저 덜어낸다.
 
@@ -220,7 +220,7 @@ export async function deletePost(id: string) {
 아니다. Server Actions는 **같은 Next.js 앱 안에서 호출되는 mutation**에 최적화된 모델이다. 모바일 앱, 웹훅, 다른 도메인의 클라이언트가 호출하는 공개 API는 여전히 API Route가 적합하다. URL을 안정적으로 유지해야 하는 공개 endpoint를 Server Actions로 만들면, 빌드마다 ID가 바뀌면서 외부 호출이 깨질 수 있다.
 
 **"`'use server'`와 `'use client'`는 대칭이다."**
-의미가 다르다. [#039](https://velog.io/@dh82680/Next.js-React-Server-Components-FE-개념-탐구-039)에서 본 `'use client'`는 "이 모듈은 클라이언트에서 실행되는 컴포넌트 경계"를 표시한다. `'use server'`는 "이 함수를 클라이언트에서 호출 가능한 서버 함수로 노출한다"는 의미다. 후자는 컴포넌트가 아니라 **함수**에 대한 표시이고, "서버 컴포넌트를 만든다"는 뜻이 아니다.
+의미가 다르다. [#039](/blog/fe-concepts/039/)에서 본 `'use client'`는 "이 모듈은 클라이언트에서 실행되는 컴포넌트 경계"를 표시한다. `'use server'`는 "이 함수를 클라이언트에서 호출 가능한 서버 함수로 노출한다"는 의미다. 후자는 컴포넌트가 아니라 **함수**에 대한 표시이고, "서버 컴포넌트를 만든다"는 뜻이 아니다.
 
 ---
 

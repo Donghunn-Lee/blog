@@ -86,7 +86,7 @@ function reducer(state: State, action: Action) {
 
 각 액션은 객체지만, 전체는 **여러 객체의 유니온**이다. 이걸 `interface`로 표현할 방법은 없다. 객체 단위마다 `interface`를 선언하고 `type Action = AddAction | RemoveAction` 식으로 우회해야 하는데, 그렇게 할 거면 처음부터 `type`으로 쓰는 게 자연스럽다.
 
-매핑된 타입(mapped type)이나 [#035에서 다룬 조건부 타입](https://velog.io/@dh82680/TypeScript-유틸리티-타입과-조건부-타입-FE-개념-탐구-035)도 마찬가지다.
+매핑된 타입(mapped type)이나 [#035에서 다룬 조건부 타입](/blog/fe-concepts/035/)도 마찬가지다.
 
 ```ts
 type ReadonlyUser = {

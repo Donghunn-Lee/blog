@@ -118,7 +118,7 @@ Pages Router에서는 페이지 컴포넌트와 그 트리 전체가 클라이�
 
 ## App Router — 컴포넌트 단위 구조
 
-App Router는 [#021 React의 렌더링](https://velog.io/@dh82680/React의-렌더링이란-FE-개념-탐구-021)에서 본 클라이언트 렌더링 모델 위에, **React Server Components(RSC)** 라는 새 빌딩 블록을 얹은 시스템이다.
+App Router는 [#021 React의 렌더링](/blog/fe-concepts/021/)에서 본 클라이언트 렌더링 모델 위에, **React Server Components(RSC)** 라는 새 빌딩 블록을 얹은 시스템이다.
 
 ```
 app/
@@ -237,7 +237,7 @@ export function LikeButton() {
 상황에 따라 다르다. 클라이언트 번들이 줄어드는 건 사실이지만, RSC payload 직렬화·전송, 서버 부하, 스트리밍 처리 비용이 새로 생긴다. 작은 정적 페이지라면 Pages Router(또는 SSG)가 단순하고 충분히 빠르다. App Router의 이점은 **데이터가 많이 얽힌 동적 페이지, 여러 영역이 독립적으로 로딩되는 페이지**에서 두드러진다.
 
 **"App Router는 SSR이고 Pages Router는 CSR이다."**
-둘 다 SSR / SSG / CSR을 지원한다. [#027 CSR과 SSR](https://velog.io/@dh82680/CSR과-SSR-FE-개념-탐구-027)에서 본 모델은 양쪽 다 가능하다. 차이는 **무엇이 기본값이고 어떻게 표현하는가**다. Pages Router는 페이지 단위로 모드를 고르고, App Router는 컴포넌트·세그먼트 단위로 더 세밀하게 제어한다.
+둘 다 SSR / SSG / CSR을 지원한다. [#027 CSR과 SSR](/blog/fe-concepts/027/)에서 본 모델은 양쪽 다 가능하다. 차이는 **무엇이 기본값이고 어떻게 표현하는가**다. Pages Router는 페이지 단위로 모드를 고르고, App Router는 컴포넌트·세그먼트 단위로 더 세밀하게 제어한다.
 
 ---
 
