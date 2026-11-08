@@ -216,10 +216,13 @@ export function buildTags(velogTags: string[], seriesTag: string | null): string
 // 규칙 9. velog 내부 링크 → 새 블로그 경로
 // ---------------------------------------------------------------------------
 
-/** `https://velog.io/@dh82680<path>`. 링크 대상 맨 앞에 붙은 `#`(`](#https://…)`, velog에서도 깨진 앵커)도 함께 치환 */
+/**
+ * `h?ttps?://velog.io/@dh82680<path>` — `ttps://` 같은 스킴 오타도 포함.
+ * 링크 대상 맨 앞에 붙은 `#`(`](#https://…)`, velog에서도 깨진 앵커)도 함께 치환
+ */
 const VELOG_LINK_RE =
-  /(?:(?<=\]\()#)?https:\/\/velog\.io\/@dh82680(\/[^\s)"'<>\]]*)?(?=[\s)"'<>\]]|$)/g
-/** 위 패턴에 안 맞는 같은 주소(`ttps://` 같은 스킴 오타 등) — 치환하지 않고 보고만 */
+  /(?:(?<=\]\()#)?h?ttps?:\/\/velog\.io\/@dh82680(\/[^\s)"'<>\]]*)?(?=[\s)"'<>\]]|$)/g
+/** 위 패턴에 안 맞는 같은 주소(스킴이 빠지거나 더 깨진 경우 등) — 치환하지 않고 보고만 */
 const VELOG_STRAY_RE = /[A-Za-z]*:?\/*velog\.io\/@dh82680[^\s)"'<>\]]*/g
 const FE_CONCEPTS_SLUG_RE = /FE-개념-탐구-(\d{3})/
 const SLATEKR_SLUG_RE = /^SlateKR-(\d{3})/
@@ -716,6 +719,7 @@ export function migrate(): void {
   const linkPosts = new Set<string>()
   const keptLinks: string[] = []
   let anchorLinks = 0
+  let otherSchemeLinks = 0
   for (const link of converted.flatMap((p) => p.links)) {
     if (link.kind === null) {
       const url = tryDecodeURIComponent(link.url) ?? link.url
@@ -725,12 +729,14 @@ export function migrate(): void {
     linkCounts.set(link.kind, (linkCounts.get(link.kind) ?? 0) + 1)
     linkPosts.add(link.sourceFile)
     if (link.url.startsWith('#')) anchorLinks += 1
+    if (!/^#?https:/.test(link.url)) otherSchemeLinks += 1
   }
   const linkTotal = [...linkCounts.values()].reduce((a, b) => a + b, 0)
   const byKind = VELOG_LINK_KINDS.map(([kind, label]) => `${label} ${linkCounts.get(kind) ?? 0}`)
   console.log(
     `규칙 9 (velog 내부 링크) 치환: ${linkTotal}건 / ${linkPosts.size}편 — ${byKind.join(', ')}` +
-      (anchorLinks > 0 ? ` (\`](#https://…)\` 앵커 접두 포함 ${anchorLinks}건)` : '')
+      (anchorLinks > 0 ? ` (\`](#https://…)\` 앵커 접두 포함 ${anchorLinks}건)` : '') +
+      (otherSchemeLinks > 0 ? ` (\`https://\` 외 스킴 포함 ${otherSchemeLinks}건)` : '')
   )
   console.log(`규칙 9 원본 유지: ${keptLinks.length}건`)
   for (const line of keptLinks) console.log(line)
