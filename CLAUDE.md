@@ -16,8 +16,10 @@
 - `data/blog/` 아래 폴더·파일명 = URL. 변경 금지(이력서·README가 링크함)
 - `data/blog/`는 `.prettierignore` 대상(하드 브레이크·코드 블록 보호). 여러 글에 걸친 수정은 일회성 codemod(`yarn tsx`)로 하고 스크립트는 커밋하지 않는다
 - `app/tag-data.json`은 contentlayer가 생성(키 이름순 정렬). 손으로 수정 금지
-- `analytics` 블록은 비워 두되 삭제 금지(layout이 참조)
+- `siteMetadata.analytics`는 비워 두되 삭제 금지(layout이 참조)
 - 새 글: `data/blog/<series>/<n>.mdx`, frontmatter `title/date/tags/summary/draft`. 이미지는 `public/static/images/<series>/` (`velog/`는 이전 글 이미지)
+  - 새 시리즈 폴더는 `data/seriesData.ts`에 등록(안 하면 시리즈 페이지 404)
+  - 움직이는 화면은 GIF 대신 mp4 + `<video autoPlay loop muted playsInline>`
 
 ## 커밋
 
