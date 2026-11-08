@@ -16,7 +16,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     }))
 
   const seriesRoutes = seriesData.map((series) => `blog/${series.slug}/`)
-  const routes = ['', 'blog/', 'projects/', 'tags/', ...seriesRoutes].map((route) => ({
+  const routes = ['', 'blog/', 'tags/', ...seriesRoutes].map((route) => ({
     url: `${siteUrl}/${route}`,
     lastModified: new Date().toISOString().split('T')[0],
   }))
