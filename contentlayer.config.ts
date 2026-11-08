@@ -76,7 +76,13 @@ async function createTagCount(allBlogs) {
       })
     }
   })
-  const formatted = await prettier.format(JSON.stringify(tagCount, null, 2), { parser: 'json' })
+  // allBlogs order varies between runs, so sort keys to keep the output (and tie order on tag pages) stable
+  const sortedTagCount = Object.fromEntries(
+    Object.entries(tagCount).sort(([a], [b]) => (a < b ? -1 : 1))
+  )
+  const formatted = await prettier.format(JSON.stringify(sortedTagCount, null, 2), {
+    parser: 'json',
+  })
   writeFileSync('./app/tag-data.json', formatted)
 }
 
