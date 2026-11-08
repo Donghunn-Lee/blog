@@ -80,8 +80,11 @@ export const generateStaticParams = async () => {
 export default async function Page(props: { params: Promise<{ slug: string[] }> }) {
   const params = await props.params
   const slug = decodeURI(params.slug.join('/'))
-  // Filter out drafts in production
-  const sortedCoreContents = allCoreContent(sortPosts(allBlogs))
+  const post = allBlogs.find((p) => p.slug === slug) as Blog
+  // Filter out drafts in production, and keep prev/next within the post's series
+  const sortedCoreContents = allCoreContent(
+    sortPosts(allBlogs.filter((p) => p.series === post?.series))
+  )
   const postIndex = sortedCoreContents.findIndex((p) => p.slug === slug)
   if (postIndex === -1) {
     return notFound()
@@ -89,7 +92,6 @@ export default async function Page(props: { params: Promise<{ slug: string[] }> 
 
   const prev = sortedCoreContents[postIndex + 1]
   const next = sortedCoreContents[postIndex - 1]
-  const post = allBlogs.find((p) => p.slug === slug) as Blog
   const authorList = post?.authors || ['default']
   const authorDetails = authorList.map((author) => {
     const authorResults = allAuthors.find((p) => p.slug === author)

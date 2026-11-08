@@ -8,6 +8,7 @@ import SectionContainer from '@/components/SectionContainer'
 import Image from '@/components/Image'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
+import seriesData from '@/data/seriesData'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
 
 const editUrl = (path) => `${siteMetadata.siteRepo}/blob/main/data/${path}`
@@ -30,8 +31,9 @@ interface LayoutProps {
 }
 
 export default function PostLayout({ content, authorDetails, next, prev, children }: LayoutProps) {
-  const { filePath, path, slug, date, title, tags } = content
+  const { filePath, path, slug, date, title, tags, series } = content
   const basePath = path.split('/')[0]
+  const seriesTitle = seriesData.find((s) => s.slug === series)?.title
 
   return (
     <SectionContainer>
@@ -152,11 +154,11 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
               </div>
               <div className="pt-4 xl:pt-8">
                 <Link
-                  href={`/${basePath}`}
+                  href={seriesTitle ? `/${basePath}/${series}` : `/${basePath}`}
                   className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-                  aria-label="Back to the blog"
+                  aria-label={seriesTitle ? `Back to ${seriesTitle}` : 'Back to the blog'}
                 >
-                  &larr; Back to the blog
+                  &larr; {seriesTitle || 'Back to the blog'}
                 </Link>
               </div>
             </footer>
