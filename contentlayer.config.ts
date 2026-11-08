@@ -118,6 +118,10 @@ export const Blog = defineDocumentType(() => ({
   },
   computedFields: {
     ...computedFields,
+    series: {
+      type: 'string',
+      resolve: (doc) => doc._raw.flattenedPath.split('/')[1],
+    },
     structuredData: {
       type: 'json',
       resolve: (doc) => ({
