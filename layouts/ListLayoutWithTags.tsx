@@ -93,6 +93,9 @@ export default function ListLayoutWithTags({
         <div className="flex sm:space-x-12">
           <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto rounded-sm bg-gray-50 pt-5 shadow-md sm:flex dark:bg-gray-900 dark:shadow-none">
             <div className="px-6 py-4">
+              <h2 className="mb-3 text-xs font-medium tracking-wide text-gray-500 dark:text-gray-400">
+                Series
+              </h2>
               {isAllPosts ? (
                 <h3 className="text-primary-500 font-bold">All Posts</h3>
               ) : (
