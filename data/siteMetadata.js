@@ -1,8 +1,8 @@
 /** @type {import("pliny/config").PlinyConfig } */
 const siteMetadata = {
-  title: "Ethan's Dev Log",
-  author: 'Ethan',
-  headerTitle: "Ethan's Dev Log",
+  title: 'Donghun Lee',
+  author: 'Donghun Lee',
+  headerTitle: 'Donghun Lee',
   description: '프론트엔드 개발 기록',
   language: 'ko',
   theme: 'system', // system, dark or light

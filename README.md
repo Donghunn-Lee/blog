@@ -1,4 +1,4 @@
-# Ethan's Dev Log
+# Donghun Lee
 
 프론트엔드 개발 기록을 모아 두는 개인 기술 블로그입니다(velog에서 이전). → https://donghunn-lee.vercel.app
 
