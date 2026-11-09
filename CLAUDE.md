@@ -2,7 +2,7 @@
 
 ## 프로젝트
 
-- Ethan's Dev Log — velog에서 이전한 개인 기술 블로그. 라이브: https://donghunn-lee.vercel.app
+- Donghun Lee — velog에서 이전한 개인 기술 블로그. 라이브: https://donghunn-lee.vercel.app
 - 목적은 포트폴리오에 넣을 게시글 제공. 포트폴리오 프로젝트가 아니므로 과한 추상화·테스트·신규 패턴 도입 금지, 템플릿 기존 패턴을 따른다
 - 템플릿: timlrx/tailwind-nextjs-starter-blog v2.4.0 (Next 15.5 · React 19 · Tailwind 4 · contentlayer2 · pliny · yarn 3). MIT — 루트 `LICENSE` 삭제 금지
 - 배포: Vercel, `main` push 시 자동(약 90초). GitHub Pages 미사용
@@ -10,6 +10,7 @@
 ## 명령
 
 - `yarn start` dev · `yarn build` 빌드(+RSS) · `yarn serve -p 3001` 프로덕션 확인(3000은 slate-kr이 쓸 수 있음) · `yarn lint`
+- `yarn build`·`yarn serve` 전에 `yarn start`(dev)를 끈다 — `.next`를 같이 써서 빌드 직후 dev 서버가 라우트 파일을 덮어쓰면 serve가 500을 낸다
 
 ## 절대 규칙
 
