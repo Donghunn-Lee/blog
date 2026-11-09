@@ -8,7 +8,7 @@
 @theme {
   /* Font families */
   --font-sans:
-    var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    var(--font-noto-sans-kr), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
   /* Colors */
@@ -77,10 +77,15 @@
     border-radius: var(--radius-sm);
     outline-color: var(--color-primary-500);
   }
+
+  body {
+    word-break: keep-all;
+  }
 }
 
 @layer utilities {
   .prose {
+    overflow-wrap: break-word;
     & a {
       color: var(--color-primary-600);
       &:hover {
