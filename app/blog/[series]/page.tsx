@@ -51,6 +51,7 @@ export default async function SeriesPage(props: { params: Promise<{ series: stri
       initialDisplayPosts={initialDisplayPosts}
       pagination={pagination}
       title={series.title}
+      description={series.description}
     />
   )
 }

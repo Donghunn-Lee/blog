@@ -2,6 +2,7 @@ import ListLayout from '@/layouts/ListLayoutWithTags'
 import { allCoreContent, sortPosts } from 'pliny/utils/contentlayer'
 import { allBlogs } from 'contentlayer/generated'
 import { notFound } from 'next/navigation'
+import siteMetadata from '@/data/siteMetadata'
 
 const POSTS_PER_PAGE = 5
 
@@ -37,6 +38,7 @@ export default async function Page(props: { params: Promise<{ page: string }> })
       initialDisplayPosts={initialDisplayPosts}
       pagination={pagination}
       title="All Posts"
+      description={siteMetadata.description}
     />
   )
 }
