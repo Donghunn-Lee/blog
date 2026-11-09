@@ -91,11 +91,11 @@ export default function ListLayoutWithTags({
           <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto rounded-sm bg-gray-50 pt-5 shadow-md sm:flex dark:bg-gray-900 dark:shadow-none">
             <div className="px-6 py-4">
               {isAllPosts ? (
-                <h3 className="text-primary-500 font-bold uppercase">All Posts</h3>
+                <h3 className="text-primary-500 font-bold">All Posts</h3>
               ) : (
                 <Link
                   href={`/blog`}
-                  className="hover:text-primary-500 dark:hover:text-primary-500 font-bold text-gray-700 uppercase dark:text-gray-300"
+                  className="hover:text-primary-500 dark:hover:text-primary-500 font-bold text-gray-700 dark:text-gray-300"
                 >
                   All Posts
                 </Link>
@@ -105,13 +105,13 @@ export default function ListLayoutWithTags({
                   return (
                     <li key={s.slug} className="my-3">
                       {currentSeries === s.slug ? (
-                        <h3 className="text-primary-500 inline px-3 py-2 text-sm font-bold uppercase">
+                        <h3 className="text-primary-500 inline px-3 py-2 text-sm font-bold">
                           {s.title}
                         </h3>
                       ) : (
                         <Link
                           href={`/blog/${s.slug}`}
-                          className="hover:text-primary-500 dark:hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 uppercase dark:text-gray-300"
+                          className="hover:text-primary-500 dark:hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-300"
                           aria-label={`View posts in the ${s.title} series`}
                         >
                           {s.title}
@@ -145,7 +145,7 @@ export default function ListLayoutWithTags({
                               {title}
                             </Link>
                           </h2>
-                          <div className="flex flex-wrap">
+                          <div className="flex flex-wrap gap-2">
                             {tags?.map((tag) => (
                               <Tag key={tag} text={tag} />
                             ))}
