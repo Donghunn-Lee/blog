@@ -38,7 +38,7 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
       <nav className="flex justify-between">
         {!prevPage && (
           <button className="cursor-auto disabled:opacity-50" disabled={!prevPage}>
-            Previous
+            이전
           </button>
         )}
         {prevPage && (
@@ -46,20 +46,20 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
             href={currentPage - 1 === 1 ? `/${basePath}/` : `/${basePath}/page/${currentPage - 1}`}
             rel="prev"
           >
-            Previous
+            이전
           </Link>
         )}
         <span>
-          {currentPage} of {totalPages}
+          {currentPage} / {totalPages}
         </span>
         {!nextPage && (
           <button className="cursor-auto disabled:opacity-50" disabled={!nextPage}>
-            Next
+            다음
           </button>
         )}
         {nextPage && (
           <Link href={`/${basePath}/page/${currentPage + 1}`} rel="next">
-            Next
+            다음
           </Link>
         )}
       </nav>
@@ -98,13 +98,13 @@ export default function ListLayoutWithTags({
                 Series
               </h2>
               {isAllPosts ? (
-                <h3 className="text-primary-500 font-bold">All Posts</h3>
+                <h3 className="text-primary-500 font-bold">전체 글</h3>
               ) : (
                 <Link
                   href={`/blog`}
                   className="hover:text-primary-500 dark:hover:text-primary-500 font-bold text-gray-700 dark:text-gray-300"
                 >
-                  All Posts
+                  전체 글
                 </Link>
               )}
               <ul>
@@ -119,7 +119,7 @@ export default function ListLayoutWithTags({
                         <Link
                           href={`/blog/${s.slug}`}
                           className="hover:text-primary-500 dark:hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-300"
-                          aria-label={`View posts in the ${s.title} series`}
+                          aria-label={`${s.title} 시리즈 글 보기`}
                         >
                           {s.title}
                         </Link>
@@ -138,7 +138,7 @@ export default function ListLayoutWithTags({
                   <li key={path} className="py-5">
                     <article className="flex flex-col space-y-2 xl:space-y-0">
                       <dl>
-                        <dt className="sr-only">Published on</dt>
+                        <dt className="sr-only">작성일</dt>
                         <dd className="text-base leading-6 font-medium text-gray-500 dark:text-gray-400">
                           <time dateTime={date} suppressHydrationWarning>
                             {formatDate(date, siteMetadata.locale)}

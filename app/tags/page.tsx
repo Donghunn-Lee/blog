@@ -4,7 +4,7 @@ import { slug } from 'github-slugger'
 import tagData from 'app/tag-data.json'
 import { genPageMetadata } from 'app/seo'
 
-export const metadata = genPageMetadata({ title: 'Tags', description: 'Things I blog about' })
+export const metadata = genPageMetadata({ title: 'Tags', description: '태그별 글 목록' })
 
 export default async function Page() {
   const tagCounts = tagData as Record<string, number>
@@ -19,7 +19,7 @@ export default async function Page() {
           </h1>
         </div>
         <div className="flex max-w-lg flex-wrap">
-          {tagKeys.length === 0 && 'No tags found.'}
+          {tagKeys.length === 0 && '태그가 없습니다.'}
           {sortedTags.map((t) => {
             return (
               <div key={t} className="mt-2 mr-5 mb-2">
@@ -27,7 +27,7 @@ export default async function Page() {
                 <Link
                   href={`/tags/${slug(t)}`}
                   className="text-sm font-semibold text-gray-600 uppercase dark:text-gray-300"
-                  aria-label={`View posts tagged ${t}`}
+                  aria-label={`${t} 태그 글 보기`}
                 >
                   {` (${tagCounts[t]})`}
                 </Link>
