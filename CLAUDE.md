@@ -21,6 +21,10 @@
 - 새 글: `data/blog/<series>/<n>.mdx`, frontmatter `title/date/tags/summary/draft`(+ 선택 `category`). 이미지는 `public/static/images/<series>/` (`velog/`는 이전 글 이미지)
   - title에 말머리(`[SlateKR #192]` 등)를 쓰지 않는다. 번호는 파일명(`192`, `188-2`)에서 계산되고, 시리즈 이름·번호·`category`는 제목 윗줄과 탭 제목에 자동으로 붙는다
   - 새 시리즈 폴더는 `data/seriesData.ts`에 등록(안 하면 시리즈 페이지 404)
+  - 태그에 시리즈명(`SlateKR` 등)은 달지 않는다. 표기 기준:
+    - 제품·라이브러리·API·코드 식별자는 공식 표기(`Next.js`, `TanStack Query`, `unstable_cache`)
+    - 약어는 대문자(`SEO`, `CI/CD`)
+    - 일반 개념어는 소문자 + 띄어쓰기(`memory leak`, `design tokens`)
   - 움직이는 화면은 GIF 대신 mp4 + `<video autoPlay loop muted playsInline>`
 
 ## 커밋
