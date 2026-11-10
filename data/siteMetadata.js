@@ -2,7 +2,7 @@
 const siteMetadata = {
   title: 'Donghun Lee',
   author: 'Donghun Lee',
-  headerTitle: 'Donghun Lee',
+  headerTitle: 'Dev Logs',
   description: '프론트엔드 개발 기록',
   language: 'ko',
   theme: 'system', // system, dark or light
