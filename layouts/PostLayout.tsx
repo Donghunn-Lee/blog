@@ -4,7 +4,6 @@ import type { Blog, Authors } from 'contentlayer/generated'
 import Comments from '@/components/Comments'
 import Link from '@/components/Link'
 import PageTitle from '@/components/PageTitle'
-import SectionContainer from '@/components/SectionContainer'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
 import seriesData, { getPostNumber } from '@/data/seriesData'
@@ -38,7 +37,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
   const seriesTitle = seriesData.find((s) => s.slug === series)?.title
 
   return (
-    <SectionContainer>
+    <>
       <ScrollTopAndComment />
       {/* One column at every width, so the header, body and footer share the same left edge */}
       <article className="mx-auto max-w-3xl">
@@ -116,6 +115,6 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
           </footer>
         </div>
       </article>
-    </SectionContainer>
+    </>
   )
 }
