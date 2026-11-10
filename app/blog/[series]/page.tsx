@@ -6,7 +6,7 @@ import { genPageMetadata } from 'app/seo'
 import { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
-const POSTS_PER_PAGE = 5
+const POSTS_PER_PAGE = 10
 
 export async function generateMetadata(props: {
   params: Promise<{ series: string }>
@@ -52,6 +52,7 @@ export default async function SeriesPage(props: { params: Promise<{ series: stri
       pagination={pagination}
       title={series.title}
       description={series.description}
+      links={series.links}
     />
   )
 }

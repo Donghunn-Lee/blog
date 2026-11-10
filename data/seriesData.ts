@@ -1,13 +1,40 @@
+export interface SeriesLinks {
+  live?: string
+  github?: string
+}
+
 interface Series {
   slug: string
   title: string
   description?: string
+  links?: SeriesLinks
 }
 
 const seriesData: Series[] = [
-  { slug: 'slatekr', title: 'SlateKR', description: '국내 주식 정보 조회 웹 서비스' },
-  { slug: 'aimtest', title: 'AimTest', description: '1인칭 에임 테스트 웹 게임' },
-  { slug: 'coworkers', title: 'Coworkers', description: '업무 진행 상황을 시각화하는 협업 서비스' },
+  {
+    slug: 'slatekr',
+    title: 'SlateKR',
+    description: '국내 주식 정보 조회 웹 서비스',
+    links: {
+      live: 'https://slate-kr.vercel.app/',
+      github: 'https://github.com/Donghunn-Lee/slate-kr',
+    },
+  },
+  {
+    slug: 'aimtest',
+    title: 'AimTest',
+    description: '1인칭 에임 테스트 웹 게임',
+    links: {
+      live: 'https://fps-aim-test.vercel.app',
+      github: 'https://github.com/Donghunn-Lee/aimtest',
+    },
+  },
+  {
+    slug: 'coworkers',
+    title: 'Coworkers',
+    description: '업무 진행 상황을 시각화하는 협업 서비스',
+    links: { github: 'https://github.com/Team-7-Coworkers/coworkers' },
+  },
   {
     slug: 'fe-concepts',
     title: 'FE 개념 탐구',

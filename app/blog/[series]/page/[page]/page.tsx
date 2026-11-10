@@ -4,7 +4,7 @@ import { allBlogs } from 'contentlayer/generated'
 import seriesData from '@/data/seriesData'
 import { notFound } from 'next/navigation'
 
-const POSTS_PER_PAGE = 5
+const POSTS_PER_PAGE = 10
 
 export const generateStaticParams = async () => {
   return seriesData.flatMap((s) => {
@@ -52,6 +52,7 @@ export default async function SeriesPage(props: {
       pagination={pagination}
       title={series.title}
       description={series.description}
+      links={series.links}
     />
   )
 }

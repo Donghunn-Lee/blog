@@ -8,7 +8,7 @@ import Link from '@/components/Link'
 import Tag from '@/components/Tag'
 import SeriesLine from '@/components/SeriesLine'
 import siteMetadata from '@/data/siteMetadata'
-import seriesData from '@/data/seriesData'
+import seriesData, { type SeriesLinks } from '@/data/seriesData'
 
 interface PaginationProps {
   totalPages: number
@@ -18,6 +18,8 @@ interface ListLayoutProps {
   posts: CoreContent<Blog>[]
   title: string
   description?: string
+  // Series pages only: "Live · GitHub" under the description
+  links?: SeriesLinks
   initialDisplayPosts?: CoreContent<Blog>[]
   pagination?: PaginationProps
 }
@@ -71,6 +73,7 @@ export default function ListLayoutWithTags({
   posts,
   title,
   description,
+  links,
   initialDisplayPosts = [],
   pagination,
 }: ListLayoutProps) {
@@ -81,6 +84,19 @@ export default function ListLayoutWithTags({
   const currentSeries = pathname.match(/^\/blog\/([^/]+)(\/page\/\d+)?\/?$/)?.[1]
 
   const displayPosts = initialDisplayPosts.length > 0 ? initialDisplayPosts : posts
+  const externalLinks = [
+    { title: 'Live', href: links?.live },
+    { title: 'GitHub', href: links?.github },
+  ].filter((link): link is { title: string; href: string } => !!link.href)
+  // The sidebar is hidden below sm, so the same list runs as one scrollable row under the title
+  const seriesNav = [
+    { href: '/blog', title: '전체 글', current: isAllPosts },
+    ...seriesData.map((s) => ({
+      href: `/blog/${s.slug}`,
+      title: s.title,
+      current: currentSeries === s.slug,
+    })),
+  ]
 
   return (
     <>
@@ -90,13 +106,41 @@ export default function ListLayoutWithTags({
             {title}
           </h1>
           {description && <p className="text-lg text-gray-500 dark:text-gray-400">{description}</p>}
+          {externalLinks.length > 0 && (
+            <p className="mt-2 flex gap-x-2 text-base font-medium">
+              {externalLinks.map((link, i) => (
+                <span key={link.title} className="flex gap-x-2">
+                  {i > 0 && <span className="text-gray-400 dark:text-gray-500">·</span>}
+                  <Link
+                    href={link.href}
+                    className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+                  >
+                    {link.title}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          )}
         </div>
+        <ul className="no-scrollbar -mt-2 flex gap-x-4 overflow-x-auto pb-4 text-sm whitespace-nowrap sm:hidden">
+          {seriesNav.map((item) => (
+            <li key={item.href}>
+              {item.current ? (
+                <span className="text-primary-500 font-bold">{item.title}</span>
+              ) : (
+                <Link
+                  href={item.href}
+                  className="hover:text-primary-500 dark:hover:text-primary-500 font-medium text-gray-500 dark:text-gray-300"
+                >
+                  {item.title}
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
         <div className="flex sm:space-x-12">
           <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto rounded-sm bg-gray-50 pt-5 shadow-md sm:flex dark:bg-gray-900 dark:shadow-none">
             <div className="px-6 py-4">
-              <h2 className="mb-3 text-xs font-medium tracking-wide text-gray-500 dark:text-gray-400">
-                Series
-              </h2>
               {isAllPosts ? (
                 <h3 className="text-primary-500 font-bold">전체 글</h3>
               ) : (
