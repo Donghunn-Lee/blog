@@ -147,7 +147,7 @@ export default function ListLayoutWithTags({
                       </dl>
                       <div className="space-y-3">
                         <div>
-                          <SeriesLine post={post} />
+                          <SeriesLine post={post} onSeriesPage={!!currentSeries} />
                           <h2 className="text-2xl leading-8 font-bold tracking-tight">
                             <Link href={`/${path}`} className="text-gray-900 dark:text-gray-100">
                               {title}

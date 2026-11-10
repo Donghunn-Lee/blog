@@ -36,6 +36,13 @@ export function getSeriesLine({ slug, series, category }: PostRef) {
   return category ? `${line} · ${category}` : line
 }
 
+// Same line on the series' own page, where the name is redundant: "#192", "#001 · JavaScript"; none for slug-named posts
+export function getNumberLine({ slug, category }: Omit<PostRef, 'series'>) {
+  const number = getPostNumber(slug)
+  if (!number) return
+  return category ? `#${number} · ${category}` : `#${number}`
+}
+
 // Tab and OG title keep the prefix the title used to carry: "[SlateKR #192] 제목", "[JavaScript] 제목 — FE 개념 탐구 #001"
 export function getFullTitle({ slug, series, category, title }: PostRef & { title: string }) {
   const seriesTitle = seriesData.find((s) => s.slug === series)?.title
