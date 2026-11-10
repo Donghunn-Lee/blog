@@ -23,7 +23,9 @@ import rehypeCitation from 'rehype-citation'
 import rehypePrismPlus from 'rehype-prism-plus'
 import rehypePresetMinify from 'rehype-preset-minify'
 import siteMetadata from './data/siteMetadata'
+import { getFullTitle } from './data/seriesData'
 import { allCoreContent, sortPosts } from 'pliny/utils/contentlayer.js'
+import type { Blog as BlogDocument } from 'contentlayer/generated'
 import prettier from 'prettier'
 
 const root = process.cwd()
@@ -86,14 +88,23 @@ async function createTagCount(allBlogs) {
   writeFileSync('./app/tag-data.json', formatted)
 }
 
-function createSearchIndex(allBlogs) {
+function createSearchIndex(allBlogs: BlogDocument[]) {
   if (
     siteMetadata?.search?.provider === 'kbar' &&
     siteMetadata.search.kbarConfig.searchDocumentsPath
   ) {
+    // pliny's KBar reads only path, title, summary and date; tags are kept alongside.
+    // Title gets the tab-title prefix so the post number ("192") is searchable
+    const searchDocs = allCoreContent(sortPosts(allBlogs)).map((post) => ({
+      path: post.path,
+      title: getFullTitle(post),
+      summary: post.summary,
+      date: post.date,
+      tags: post.tags,
+    }))
     writeFileSync(
       `public/${path.basename(siteMetadata.search.kbarConfig.searchDocumentsPath)}`,
-      JSON.stringify(allCoreContent(sortPosts(allBlogs)))
+      JSON.stringify(searchDocs)
     )
     console.log('Local search index generated...')
   }
