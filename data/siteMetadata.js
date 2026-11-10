@@ -11,7 +11,7 @@ const siteMetadata = {
   siteLogo: `${process.env.BASE_PATH || ''}/static/images/logo.png`,
   socialBanner: `${process.env.BASE_PATH || ''}/static/images/twitter-card.png`,
   mastodon: '',
-  email: '',
+  email: 'dh82680@gmail.com',
   github: 'https://github.com/Donghunn-Lee',
   x: '',
   // twitter: 'https://twitter.com/Twitter',
