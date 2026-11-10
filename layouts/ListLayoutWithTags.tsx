@@ -6,6 +6,7 @@ import { CoreContent } from 'pliny/utils/contentlayer'
 import type { Blog } from 'contentlayer/generated'
 import Link from '@/components/Link'
 import Tag from '@/components/Tag'
+import SeriesLine from '@/components/SeriesLine'
 import siteMetadata from '@/data/siteMetadata'
 import seriesData from '@/data/seriesData'
 
@@ -146,6 +147,7 @@ export default function ListLayoutWithTags({
                       </dl>
                       <div className="space-y-3">
                         <div>
+                          <SeriesLine post={post} />
                           <h2 className="text-2xl leading-8 font-bold tracking-tight">
                             <Link href={`/${path}`} className="text-gray-900 dark:text-gray-100">
                               {title}

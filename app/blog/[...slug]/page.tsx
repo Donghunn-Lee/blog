@@ -12,6 +12,7 @@ import PostLayout from '@/layouts/PostLayout'
 import PostBanner from '@/layouts/PostBanner'
 import { Metadata } from 'next'
 import siteMetadata from '@/data/siteMetadata'
+import { getFullTitle } from '@/data/seriesData'
 import { notFound } from 'next/navigation'
 
 const defaultLayout = 'PostLayout'
@@ -39,6 +40,7 @@ export async function generateMetadata(props: {
   const publishedAt = new Date(post.date).toISOString()
   const modifiedAt = new Date(post.lastmod || post.date).toISOString()
   const authors = authorDetails.map((author) => author.name)
+  const title = getFullTitle(post)
   let imageList = [siteMetadata.socialBanner]
   if (post.images) {
     imageList = typeof post.images === 'string' ? [post.images] : post.images
@@ -50,10 +52,10 @@ export async function generateMetadata(props: {
   })
 
   return {
-    title: post.title,
+    title,
     description: post.summary,
     openGraph: {
-      title: post.title,
+      title,
       description: post.summary,
       siteName: siteMetadata.title,
       locale: 'ko_KR',
@@ -66,7 +68,7 @@ export async function generateMetadata(props: {
     },
     twitter: {
       card: 'summary_large_image',
-      title: post.title,
+      title,
       description: post.summary,
       images: imageList,
     },

@@ -8,10 +8,15 @@ import SectionContainer from '@/components/SectionContainer'
 import Image from '@/components/Image'
 import Tag from '@/components/Tag'
 import siteMetadata from '@/data/siteMetadata'
-import seriesData from '@/data/seriesData'
+import seriesData, { getPostNumber } from '@/data/seriesData'
 import ScrollTopAndComment from '@/components/ScrollTopAndComment'
+import SeriesLine from '@/components/SeriesLine'
 
 const editUrl = (path) => `${siteMetadata.siteRepo}/blob/main/data/${path}`
+const navTitle = ({ path, title }: { path: string; title: string }) => {
+  const number = getPostNumber(path)
+  return number ? `#${number} ${title}` : title
+}
 const discussUrl = (path) =>
   `https://mobile.twitter.com/search?q=${encodeURIComponent(`${siteMetadata.siteUrl}/${path}`)}`
 
@@ -53,6 +58,7 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
                 </div>
               </dl>
               <div>
+                <SeriesLine post={content} />
                 <PageTitle>{title}</PageTitle>
               </div>
             </div>
@@ -137,7 +143,7 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
                           Previous Article
                         </h2>
                         <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
-                          <Link href={`/${prev.path}`}>{prev.title}</Link>
+                          <Link href={`/${prev.path}`}>{navTitle(prev)}</Link>
                         </div>
                       </div>
                     )}
@@ -147,7 +153,7 @@ export default function PostLayout({ content, authorDetails, next, prev, childre
                           Next Article
                         </h2>
                         <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
-                          <Link href={`/${next.path}`}>{next.title}</Link>
+                          <Link href={`/${next.path}`}>{navTitle(next)}</Link>
                         </div>
                       </div>
                     )}
