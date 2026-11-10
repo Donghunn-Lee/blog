@@ -2,13 +2,15 @@ import Link from '@/components/Link'
 import Tag from '@/components/Tag'
 import { slug } from 'github-slugger'
 import tagData from 'app/tag-data.json'
+import { getTagName } from 'app/tag-names'
 import { genPageMetadata } from 'app/seo'
 
 export const metadata = genPageMetadata({ title: 'Tags', description: '태그별 글 목록' })
 
 export default async function Page() {
   const tagCounts = tagData as Record<string, number>
-  const tagKeys = Object.keys(tagCounts)
+  // One-post tags keep their own page but are left out of the index
+  const tagKeys = Object.keys(tagCounts).filter((t) => tagCounts[t] >= 2)
   const sortedTags = tagKeys.sort((a, b) => tagCounts[b] - tagCounts[a])
   return (
     <>
@@ -23,11 +25,11 @@ export default async function Page() {
           {sortedTags.map((t) => {
             return (
               <div key={t} className="mt-2 mr-5 mb-2">
-                <Tag text={t} />
+                <Tag text={getTagName(t)} />
                 <Link
                   href={`/tags/${slug(t)}`}
                   className="text-sm font-semibold text-gray-600 uppercase dark:text-gray-300"
-                  aria-label={`${t} 태그 글 보기`}
+                  aria-label={`${getTagName(t)} 태그 글 보기`}
                 >
                   {` (${tagCounts[t]})`}
                 </Link>
