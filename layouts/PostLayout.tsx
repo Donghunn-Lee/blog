@@ -1,7 +1,6 @@
 import { ReactNode } from 'react'
 import { CoreContent } from 'pliny/utils/contentlayer'
 import type { Blog, Authors } from 'contentlayer/generated'
-import Comments from '@/components/Comments'
 import Link from '@/components/Link'
 import PageTitle from '@/components/PageTitle'
 import Tag from '@/components/Tag'
@@ -32,7 +31,7 @@ interface LayoutProps {
 }
 
 export default function PostLayout({ content, next, prev, children }: LayoutProps) {
-  const { filePath, path, slug, date, title, tags, series } = content
+  const { filePath, path, date, title, tags, series } = content
   const basePath = path.split('/')[0]
   const seriesTitle = seriesData.find((s) => s.slug === series)?.title
 
@@ -73,11 +72,6 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
           <div className="pt-6 pb-6 text-sm text-gray-700 dark:text-gray-300">
             <Link href={editUrl(filePath)}>GitHub에서 보기</Link>
           </div>
-          {siteMetadata.comments && (
-            <div className="pt-6 pb-6 text-center text-gray-700 dark:text-gray-300" id="comment">
-              <Comments slug={slug} />
-            </div>
-          )}
           <footer className="pb-8 text-sm leading-5 font-medium">
             {(next || prev) && (
               <div className="grid grid-cols-2 gap-x-8 pt-6">
