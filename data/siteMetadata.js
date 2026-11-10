@@ -6,7 +6,7 @@ const siteMetadata = {
   description: '프론트엔드 개발자 이동훈의 개발 기록입니다.',
   language: 'ko',
   theme: 'system', // system, dark or light
-  siteUrl: 'https://donghunn-lee.vercel.app',
+  siteUrl: 'https://donghunn-lee-blog.vercel.app',
   siteRepo: 'https://github.com/Donghunn-Lee/blog',
   siteLogo: `${process.env.BASE_PATH || ''}/static/images/logo.png`,
   socialBanner: `${process.env.BASE_PATH || ''}/static/images/twitter-card.png`,
