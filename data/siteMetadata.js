@@ -3,7 +3,7 @@ const siteMetadata = {
   title: 'Donghun Lee',
   author: 'Donghun Lee',
   headerTitle: 'Dev Logs',
-  description: '프론트엔드 개발 기록',
+  description: '프론트엔드 개발자 이동훈의 개발 기록입니다.',
   language: 'ko',
   theme: 'system', // system, dark or light
   siteUrl: 'https://donghunn-lee.vercel.app',

@@ -6,18 +6,46 @@ import { formatDate } from 'pliny/utils/formatDate'
 
 const MAX_DISPLAY = 5
 
-export default function Home({ posts }) {
+export default function Home({ posts, series }) {
   return (
     <>
-      <div className="divide-y divide-gray-200 dark:divide-gray-700">
-        <div className="space-y-2 pt-6 pb-8 md:space-y-5">
-          <h1 className="text-3xl leading-9 font-extrabold tracking-tight text-gray-900 sm:text-4xl sm:leading-10 md:text-6xl md:leading-14 dark:text-gray-100">
-            최근 글
-          </h1>
-          <p className="text-lg leading-7 text-gray-500 dark:text-gray-400">
-            {siteMetadata.description}
-          </p>
-        </div>
+      <div className="pt-6 pb-10">
+        <h1 className="sr-only">{siteMetadata.title}</h1>
+        <p className="text-lg leading-7 text-gray-500 dark:text-gray-400">
+          프론트엔드 개발자{' '}
+          <strong className="font-bold text-gray-900 dark:text-gray-100">이동훈</strong>의 개발
+          기록입니다.
+        </p>
+      </div>
+      <section className="pb-12">
+        <h2 className="text-2xl leading-8 font-bold tracking-tight text-gray-900 dark:text-gray-100">
+          Series
+        </h2>
+        <ul className="mt-6 grid gap-4 sm:grid-cols-2">
+          {series.map((s) => (
+            <li key={s.slug}>
+              <Link
+                href={`/blog/${s.slug}`}
+                className="hover:border-primary-500 dark:hover:border-primary-400 block h-full rounded-md border border-gray-200 p-5 dark:border-gray-700"
+              >
+                <h3 className="text-lg leading-7 font-bold text-gray-900 dark:text-gray-100">
+                  {s.title}
+                </h3>
+                {s.description && (
+                  <p className="mt-1 text-gray-500 dark:text-gray-400">{s.description}</p>
+                )}
+                <p className="mt-3 text-sm font-medium text-gray-500 dark:text-gray-400">
+                  {s.postCount}편
+                </p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section>
+        <h2 className="text-2xl leading-8 font-bold tracking-tight text-gray-900 dark:text-gray-100">
+          Latest
+        </h2>
         <ul className="divide-y divide-gray-200 dark:divide-gray-700">
           {!posts.length && '아직 글이 없습니다.'}
           {posts.slice(0, MAX_DISPLAY).map((post) => {
@@ -36,14 +64,14 @@ export default function Home({ posts }) {
                       <div className="space-y-6">
                         <div>
                           <SeriesLine post={post} />
-                          <h2 className="text-2xl leading-8 font-bold tracking-tight">
+                          <h3 className="text-2xl leading-8 font-bold tracking-tight">
                             <Link
                               href={`/blog/${slug}`}
                               className="text-gray-900 dark:text-gray-100"
                             >
                               {title}
                             </Link>
-                          </h2>
+                          </h3>
                           {tags.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-2">
                               {tags.map((tag) => (
@@ -63,18 +91,18 @@ export default function Home({ posts }) {
             )
           })}
         </ul>
-      </div>
-      {posts.length > MAX_DISPLAY && (
-        <div className="flex justify-end text-base leading-6 font-medium">
-          <Link
-            href="/blog"
-            className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
-            aria-label="전체 글"
-          >
-            전체 글 &rarr;
-          </Link>
-        </div>
-      )}
+        {posts.length > MAX_DISPLAY && (
+          <div className="flex justify-end text-base leading-6 font-medium">
+            <Link
+              href="/blog"
+              className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400"
+              aria-label="전체 글"
+            >
+              전체 글 &rarr;
+            </Link>
+          </div>
+        )}
+      </section>
     </>
   )
 }
