@@ -12,7 +12,7 @@ export default function SeriesLine({ post, onSeriesPage }: Props) {
   if (!line) return null
 
   return (
-    <div className="text-sm leading-5 font-medium text-gray-500 dark:text-gray-400">
+    <div className="text-base leading-6 font-semibold text-gray-900 dark:text-gray-100">
       {onSeriesPage ? (
         line
       ) : (
