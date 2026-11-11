@@ -21,22 +21,22 @@ export default function Home({ posts, series }) {
         <h2 className="text-2xl leading-8 font-bold tracking-tight text-gray-900 dark:text-gray-100">
           Series
         </h2>
-        <ul className="mt-6 grid gap-4 sm:grid-cols-2">
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
           {series.map((s) => (
             <li key={s.slug}>
               <Link
                 href={`/blog/${s.slug}`}
-                className="hover:border-primary-500 dark:hover:border-primary-400 block h-full rounded-md border border-gray-200 p-5 dark:border-gray-700"
+                className="hover:border-primary-500 dark:hover:border-primary-400 block h-full rounded-md border border-gray-200 px-4 py-3 dark:border-gray-700"
               >
-                <h3 className="text-lg leading-7 font-bold text-gray-900 dark:text-gray-100">
-                  {s.title}
-                </h3>
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="font-bold text-gray-900 dark:text-gray-100">{s.title}</h3>
+                  <span className="shrink-0 text-sm text-gray-500 dark:text-gray-400">
+                    {s.postCount}편
+                  </span>
+                </div>
                 {s.description && (
-                  <p className="mt-1 text-gray-500 dark:text-gray-400">{s.description}</p>
+                  <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{s.description}</p>
                 )}
-                <p className="mt-3 text-sm font-medium text-gray-500 dark:text-gray-400">
-                  {s.postCount}편
-                </p>
               </Link>
             </li>
           ))}
