@@ -8,8 +8,9 @@ interface Props {
 }
 
 export default function SeriesLine({ post, onSeriesPage }: Props) {
-  const line = onSeriesPage ? getNumberLine(post) : getSeriesLine(post)
-  if (!line) return null
+  const text = onSeriesPage ? getNumberLine(post) : getSeriesLine(post)
+  if (!text) return null
+  const line = `[${text}]`
 
   return (
     <div className="text-base leading-6 font-semibold text-gray-900 dark:text-gray-100">
