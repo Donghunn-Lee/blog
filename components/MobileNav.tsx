@@ -4,7 +4,9 @@ import { Dialog, DialogPanel, Transition, TransitionChild } from '@headlessui/re
 import { disableBodyScroll, enableBodyScroll, clearAllBodyScrollLocks } from 'body-scroll-lock'
 import { Fragment, useState, useEffect, useRef } from 'react'
 import Link from './Link'
+import SocialIcon from './social-icons'
 import headerNavLinks from '@/data/headerNavLinks'
+import siteMetadata from '@/data/siteMetadata'
 
 const MobileNav = () => {
   const [mounted, setMounted] = useState(false)
@@ -87,6 +89,10 @@ const MobileNav = () => {
                       {link.title}
                     </Link>
                   ))}
+                  <div className="mt-4 flex space-x-6">
+                    <SocialIcon kind="mail" href={`mailto:${siteMetadata.email}`} size={6} />
+                    <SocialIcon kind="github" href={siteMetadata.github} size={6} />
+                  </div>
                 </nav>
 
                 <button

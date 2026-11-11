@@ -5,6 +5,7 @@ import Link from './Link'
 import MobileNav from './MobileNav'
 import ThemeSwitch from './ThemeSwitch'
 import SearchButton from './SearchButton'
+import SocialIcon from './social-icons'
 
 const Header = () => {
   let headerClass = 'flex items-center w-full bg-white dark:bg-gray-800 justify-between py-10'
@@ -44,6 +45,12 @@ const Header = () => {
             ))}
         </div>
         <SearchButton />
+        {/* No room next to the title on phones, so these move into MobileNav there */}
+        <div className="hidden items-center space-x-6 sm:flex">
+          <span aria-hidden="true" className="h-5 w-px bg-gray-300 dark:bg-gray-600" />
+          <SocialIcon kind="mail" href={`mailto:${siteMetadata.email}`} size={6} />
+          <SocialIcon kind="github" href={siteMetadata.github} size={6} />
+        </div>
         <ThemeSwitch />
         <MobileNav />
       </div>
