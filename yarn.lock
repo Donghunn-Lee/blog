@@ -10084,6 +10084,31 @@ __metadata:
   languageName: node
   linkType: hard
 
+"pliny@patch:pliny@npm%3A0.4.1#./.yarn/patches/pliny-npm-0.4.1-23b10fccc8.patch::locator=blog%40workspace%3A.":
+  version: 0.4.1
+  resolution: "pliny@patch:pliny@npm%3A0.4.1#./.yarn/patches/pliny-npm-0.4.1-23b10fccc8.patch::version=0.4.1&hash=326dee&locator=blog%40workspace%3A."
+  dependencies:
+    "@docsearch/react": ^3.6.2
+    "@giscus/react": ^3.0.0
+    "@mailchimp/mailchimp_marketing": ^3.0.80
+    contentlayer2: ^0.5.3
+    copyfiles: ^2.4.1
+    github-slugger: ^2.0.0
+    js-yaml: 4.1.0
+    kbar: 0.1.0-beta.45
+    next-contentlayer2: ^0.5.3
+    next-themes: ^0.3.0
+    probe-image-size: ^7.2.3
+    remark: ^15.0.0
+    unist-util-visit: ^5.0.0
+  peerDependencies:
+    next: ">=13.0.0"
+    react: ^17.0.2 || ^18 || ^19 || ^19.0.0-rc
+    react-dom: ^17.0.2 || ^18 || ^19 || ^19.0.0-rc
+  checksum: d109689e011d6216553a674317ce1a92bb99a9b187b6f831b1ea34d74a1647fa49462465b7cfd50f157d3d5ff8cfe896c9ffd4d43823528a46a56c40630e1f4e
+  languageName: node
+  linkType: hard
+
 "possible-typed-array-names@npm:^1.0.0":
   version: 1.1.0
   resolution: "possible-typed-array-names@npm:1.1.0"
