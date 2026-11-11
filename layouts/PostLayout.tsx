@@ -42,7 +42,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
       <article className="mx-auto max-w-3xl">
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           <header className="pt-6 pb-6">
-            <div className="space-y-1 text-center">
+            <div className="space-y-1">
               <dl className="space-y-10">
                 <div>
                   <dt className="sr-only">작성일</dt>
@@ -57,7 +57,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
                 <SeriesLine post={content} />
                 <PageTitle>{title}</PageTitle>
                 {tags.length > 0 && (
-                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <div className="mt-4 flex flex-wrap gap-2">
                     {tags.map((tag) => (
                       <Tag key={tag} text={tag} />
                     ))}
