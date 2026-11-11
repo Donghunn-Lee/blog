@@ -85,7 +85,7 @@ const ThemeSwitch = () => {
                   <MenuItem>
                     {({ focus }) => (
                       <button
-                        className={`${focus ? 'bg-primary-600 text-white' : ''} group flex w-full items-center rounded-md px-2 py-2 text-sm`}
+                        className={`${focus ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-100' : ''} group flex w-full items-center rounded-md px-2 py-2 text-sm`}
                       >
                         <div className="mr-2">
                           <Sun />
@@ -100,7 +100,9 @@ const ThemeSwitch = () => {
                     {({ focus }) => (
                       <button
                         className={`${
-                          focus ? 'bg-primary-600 text-white' : ''
+                          focus
+                            ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-100'
+                            : ''
                         } group flex w-full items-center rounded-md px-2 py-2 text-sm`}
                       >
                         <div className="mr-2">
@@ -116,7 +118,9 @@ const ThemeSwitch = () => {
                     {({ focus }) => (
                       <button
                         className={`${
-                          focus ? 'bg-primary-600 text-white' : ''
+                          focus
+                            ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/50 dark:text-primary-100'
+                            : ''
                         } group flex w-full items-center rounded-md px-2 py-2 text-sm`}
                       >
                         <div className="mr-2">
