@@ -42,7 +42,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
       <article className="mx-auto max-w-3xl">
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           <header className="pt-6 pb-6">
-            <div className="space-y-1">
+            <div className="space-y-4">
               <dl className="space-y-10">
                 <div>
                   <dt className="sr-only">작성일</dt>

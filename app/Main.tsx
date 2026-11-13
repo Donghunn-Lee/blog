@@ -53,7 +53,7 @@ export default function Home({ posts, series }) {
             return (
               <li key={slug} className="py-12">
                 <article>
-                  <div className="space-y-2 xl:grid xl:grid-cols-4 xl:items-baseline xl:space-y-0">
+                  <div className="space-y-3 xl:grid xl:grid-cols-4 xl:items-baseline xl:space-y-0">
                     <dl>
                       <dt className="sr-only">작성일</dt>
                       <dd className="text-base leading-6 font-medium text-gray-500 dark:text-gray-400">
@@ -61,7 +61,7 @@ export default function Home({ posts, series }) {
                       </dd>
                     </dl>
                     <div className="space-y-5 xl:col-span-3">
-                      <div className="space-y-6">
+                      <div className="space-y-3.5">
                         <div>
                           <SeriesLine post={post} />
                           <h3 className="text-2xl leading-8 font-bold tracking-tight">
