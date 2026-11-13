@@ -22,12 +22,48 @@ const postDateTemplate: Intl.DateTimeFormatOptions = {
   day: 'numeric',
 }
 
+type NavPost = { path: string; title: string }
+
 interface LayoutProps {
   content: CoreContent<Blog>
   authorDetails: CoreContent<Authors>[]
-  next?: { path: string; title: string }
-  prev?: { path: string; title: string }
+  next?: NavPost
+  prev?: NavPost
   children: ReactNode
+}
+
+// Shown above the header and in the footer
+function PrevNext({
+  prev,
+  next,
+  className,
+}: {
+  prev?: NavPost
+  next?: NavPost
+  className: string
+}) {
+  if (!next && !prev) return null
+
+  return (
+    <nav aria-label="이전 글 · 다음 글" className={`grid grid-cols-2 gap-x-8 ${className}`}>
+      {prev && prev.path && (
+        <div>
+          <div className="text-xs tracking-wide text-gray-500 dark:text-gray-400">이전 글</div>
+          <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
+            <Link href={`/${prev.path}`}>{navTitle(prev)}</Link>
+          </div>
+        </div>
+      )}
+      {next && next.path && (
+        <div className="col-start-2 text-right">
+          <div className="text-xs tracking-wide text-gray-500 dark:text-gray-400">다음 글</div>
+          <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
+            <Link href={`/${next.path}`}>{navTitle(next)}</Link>
+          </div>
+        </div>
+      )}
+    </nav>
+  )
 }
 
 export default function PostLayout({ content, next, prev, children }: LayoutProps) {
@@ -42,6 +78,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
       <article className="mx-auto max-w-3xl">
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           <header className="pt-6 pb-6">
+            <PrevNext prev={prev} next={next} className="mb-8 text-sm leading-5 font-medium" />
             <div className="space-y-4">
               <dl className="space-y-10">
                 <div>
@@ -73,30 +110,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
             <Link href={editUrl(filePath)}>GitHub에서 보기</Link>
           </div>
           <footer className="pb-8 text-sm leading-5 font-medium">
-            {(next || prev) && (
-              <div className="grid grid-cols-2 gap-x-8 pt-6">
-                {prev && prev.path && (
-                  <div>
-                    <h2 className="text-xs tracking-wide text-gray-500 dark:text-gray-400">
-                      이전 글
-                    </h2>
-                    <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
-                      <Link href={`/${prev.path}`}>{navTitle(prev)}</Link>
-                    </div>
-                  </div>
-                )}
-                {next && next.path && (
-                  <div className="col-start-2 text-right">
-                    <h2 className="text-xs tracking-wide text-gray-500 dark:text-gray-400">
-                      다음 글
-                    </h2>
-                    <div className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400">
-                      <Link href={`/${next.path}`}>{navTitle(next)}</Link>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <PrevNext prev={prev} next={next} className="pt-6" />
             <div className="pt-6">
               <Link
                 href={seriesTitle ? `/${basePath}/${series}` : `/${basePath}`}
