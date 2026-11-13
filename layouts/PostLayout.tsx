@@ -54,7 +54,7 @@ export default function PostLayout({ content, next, prev, children }: LayoutProp
                 </div>
               </dl>
               <div>
-                <SeriesLine post={content} />
+                <SeriesLine post={content} large />
                 <PageTitle>{title}</PageTitle>
                 {tags.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-2">
